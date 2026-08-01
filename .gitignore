@@ -41,3 +41,7 @@
 /whisper.cpp
 .DS_Store
 /chipper/openaiChats.json
+.specify
+.codegraph
+.github
+pi服务器.md
