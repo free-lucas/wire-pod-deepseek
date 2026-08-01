@@ -69,7 +69,7 @@ type TTSResponse struct {
 }
 
 //  调用TTS API并返回音频数据
-func callTTSAPI(text string) ([]byte, error) {
+func callTTSAPI(text string, ttsAPIURL string) ([]byte, error) {
 	// 创建HTTP请求
 	payload := RequestPayload{
 		Text:                   []string{text},

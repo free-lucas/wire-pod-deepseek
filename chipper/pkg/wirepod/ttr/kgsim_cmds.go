@@ -152,7 +152,7 @@ func ModelIsSupported(cmd LLMCommand, model string) bool {
 func CreatePrompt(origPrompt string, model string, isKG bool) string {
 	prompt := origPrompt + "\n\n" + "Keep in mind, user input comes from speech-to-text software, so respond accordingly. No special characters, especially these: & ^ * # @ - . No lists. No formatting."
 	if vars.APIConfig.Knowledge.CommandsEnable {
-               prompt = prompt + "\n\n" + "You are running ON an Anki Vector robot. You have a set of commands. If you include an emoji, I will make you start over. If you want to use a command but it doesn't exist or your desired parameter isn't in the list, avoid using the command. The format is {{command||parameter}}. You can embed these in sentences. Example: \"User: How are you feeling? | Response: \"{{playAnimationWI||sad}} I'm feeling sad...\". Square brackets ([]) are not valid.\n\nUse the playAnimation or playAnimationWI commands if you want to express emotion! You are very animated and good at following instructions. Animation takes precendence over words. You are to include many animations in your response.\n\nHere is every valid command:"
+		prompt = prompt + "\n\n" + "You are running ON an Anki Vector robot. You have a set of commands. If you include an emoji, I will make you start over. If you want to use a command but it doesn't exist or your desired parameter isn't in the list, avoid using the command. The format is {{command||parameter}}. You can embed these in sentences. Example: \"User: How are you feeling? | Response: \"{{playAnimationWI||sad}} I'm feeling sad...\". Square brackets ([]) are not valid.\n\nUse the playAnimation or playAnimationWI commands if you want to express emotion! You are very animated and good at following instructions. Animation takes precendence over words. You are to include many animations in your response.\n\nHere is every valid command:"
 		for _, cmd := range ValidLLMCommands {
 			if ModelIsSupported(cmd, model) {
 				promptAppendage := "\n\nCommand Name: " + cmd.Command + "\nDescription: " + cmd.Description + "\nParameter choices: " + cmd.ParamChoices
@@ -290,9 +290,19 @@ func DoSayText(input string, robot *vector.Vector) error {
 	// just before vector speaks
 	removeSpecialCharacters(input)
 
-	if (vars.APIConfig.STT.Language != "en-US" && vars.APIConfig.Knowledge.Provider == "openai") || vars.APIConfig.Knowledge.OpenAIVoiceWithEnglish {
-		err := DoSayText_OpenAI(robot, input)
-		return err
+	if vars.APIConfig.STT.Language != "en-US" {
+		ttsProvider := vars.APIConfig.TTS.Provider
+		switch ttsProvider {
+		case vars.TTSProviderVolcengine:
+			return DoSayText_Volcengine(robot, input)
+		case vars.TTSProviderLocal:
+			return DoSayText_Local(robot, input, vars.APIConfig.TTS.LocalURL)
+		default:
+			// legacy: openai provider (backward compatible)
+			if vars.APIConfig.Knowledge.Provider == "openai" || vars.APIConfig.Knowledge.OpenAIVoiceWithEnglish {
+				return DoSayText_OpenAI(robot, input)
+			}
+		}
 	}
 	robot.Conn.SayText(
 		context.Background(),
@@ -390,6 +400,60 @@ func DoSayText_OpenAI(robot *vector.Vector, input string) error {
 	return nil
 }
 
+// DoSayText_Local uses a configurable local TTS server to speak non-English text via ExternalAudioStreamPlayback
+func DoSayText_Local(robot *vector.Vector, input string, ttsURL string) error {
+	if strings.TrimSpace(input) == "" {
+		return nil
+	}
+	audioData, err := callTTSAPI(input, ttsURL)
+	if err != nil {
+		logger.Println("Local TTS error: " + err.Error())
+		return err
+	}
+	vclient, err := robot.Conn.ExternalAudioStreamPlayback(context.Background())
+	if err != nil {
+		return err
+	}
+	vclient.Send(&vectorpb.ExternalAudioStreamRequest{
+		AudioRequestType: &vectorpb.ExternalAudioStreamRequest_AudioStreamPrepare{
+			AudioStreamPrepare: &vectorpb.ExternalAudioStreamPrepare{
+				AudioFrameRate: 16000,
+				AudioVolume:    100,
+			},
+		},
+	})
+
+	// Chunk audio data and send
+	chunkSize := 1024
+	var chunksToDetermineLength []byte
+	go func() {
+		for i := 0; i < len(audioData); i += chunkSize {
+			end := i + chunkSize
+			if end > len(audioData) {
+				end = len(audioData)
+			}
+			chunk := audioData[i:end]
+			vclient.Send(&vectorpb.ExternalAudioStreamRequest{
+				AudioRequestType: &vectorpb.ExternalAudioStreamRequest_AudioStreamChunk{
+					AudioStreamChunk: &vectorpb.ExternalAudioStreamChunk{
+						AudioChunkSizeBytes: uint32(len(chunk)),
+						AudioChunkSamples:   chunk,
+					},
+				},
+			})
+			time.Sleep(time.Millisecond * 25)
+		}
+		vclient.Send(&vectorpb.ExternalAudioStreamRequest{
+			AudioRequestType: &vectorpb.ExternalAudioStreamRequest_AudioStreamComplete{
+				AudioStreamComplete: &vectorpb.ExternalAudioStreamComplete{},
+			},
+		})
+	}()
+	chunksToDetermineLength = audioData
+	time.Sleep(pcmLength(chunksToDetermineLength) + (time.Millisecond * 50))
+	return nil
+}
+
 func DoGetImage(msgs []openai.ChatCompletionMessage, param string, robot *vector.Vector, stopStop chan bool) {
 	stopImaging := false
 	go func() {
@@ -465,26 +529,22 @@ func DoGetImage(msgs []openai.ChatCompletionMessage, param string, robot *vector
 	var fullfullRespText string
 	var fullRespSlice []string
 	var isDone bool
-	var c *openai.Client
-	if vars.APIConfig.Knowledge.Provider == "together" {
-		if vars.APIConfig.Knowledge.Model == "" {
-			vars.APIConfig.Knowledge.Model = "meta-llama/Llama-2-70b-chat-hf"
-			vars.WriteConfigToDisk()
-		}
-		conf := openai.DefaultConfig(vars.APIConfig.Knowledge.Key)
-		conf.BaseURL = "https://api.together.xyz/v1"
-		c = openai.NewClientWithConfig(conf)
-	} else if vars.APIConfig.Knowledge.Provider == "openai" {
-		c = openai.NewClient(vars.APIConfig.Knowledge.Key)
-	} else if vars.APIConfig.Knowledge.Provider == "custom" {
-        conf := openai.DefaultConfig(vars.APIConfig.Knowledge.Key)
-		conf.BaseURL = vars.APIConfig.Knowledge.Endpoint
-		c = openai.NewClientWithConfig(conf)
-    	}
+	c, err := newKnowledgeClient()
+	if err != nil {
+		logger.Println("LLM error: " + err.Error())
+		return
+	}
 	ctx := context.Background()
 	speakReady := make(chan string)
 
+	model, err := knowledgeModel(false)
+	if err != nil {
+		logger.Println("LLM error: " + err.Error())
+		return
+	}
+
 	aireq := openai.ChatCompletionRequest{
+		Model:            model,
 		MaxTokens:        2048,
 		Temperature:      1,
 		TopP:             1,
@@ -493,18 +553,14 @@ func DoGetImage(msgs []openai.ChatCompletionMessage, param string, robot *vector
 		Messages:         msgs,
 		Stream:           true,
 	}
-	if vars.APIConfig.Knowledge.Provider == "openai" {
-		aireq.Model = openai.GPT4oMini
-		logger.Println("Using " + aireq.Model)
-	} else {
-		logger.Println("Using " + vars.APIConfig.Knowledge.Model)
-		aireq.Model = vars.APIConfig.Knowledge.Model
-	}
+	logger.Println("Using " + aireq.Model)
 	if stopImaging {
 		return
 	}
 	stream, err := c.CreateChatCompletionStream(ctx, aireq)
 	if err != nil {
+		logger.Println("Knowledge provider stream error: " + err.Error())
+		logger.LogUI("Knowledge provider stream error: " + err.Error())
 		if strings.Contains(err.Error(), "does not exist") && vars.APIConfig.Knowledge.Provider == "openai" {
 			logger.Println("GPT-4 model cannot be accessed with this API key. You likely need to add more than $5 dollars of funds to your OpenAI account.")
 			logger.LogUI("GPT-4 model cannot be accessed with this API key. You likely need to add more than $5 dollars of funds to your OpenAI account.")
@@ -560,7 +616,7 @@ func DoGetImage(msgs []openai.ChatCompletionMessage, param string, robot *vector
 			}
 			fullfullRespText = fullfullRespText + removeSpecialCharacters(response.Choices[0].Delta.Content)
 			fullRespText = fullRespText + removeSpecialCharacters(response.Choices[0].Delta.Content)
-			if strings.Contains(fullRespText, "...") || strings.Contains(fullRespText, ".'") || strings.Contains(fullRespText, ".\"") || strings.Contains(fullRespText, ".") || strings.Contains(fullRespText, "?") || strings.Contains(fullRespText, "!") {
+			if strings.Contains(fullRespText, "...") || strings.Contains(fullRespText, ".'") || strings.Contains(fullRespText, ".\"") || strings.Contains(fullRespText, ".") || strings.Contains(fullRespText, "?") || strings.Contains(fullRespText, "!") || strings.Contains(fullRespText, "。") || strings.Contains(fullRespText, "！") || strings.Contains(fullRespText, "？") {
 				var sepStr string
 				if strings.Contains(fullRespText, "...") {
 					sepStr = "..."
@@ -574,6 +630,12 @@ func DoGetImage(msgs []openai.ChatCompletionMessage, param string, robot *vector
 					sepStr = "?"
 				} else if strings.Contains(fullRespText, "!") {
 					sepStr = "!"
+				} else if strings.Contains(fullRespText, "。") {
+					sepStr = "。"
+				} else if strings.Contains(fullRespText, "！") {
+					sepStr = "！"
+				} else if strings.Contains(fullRespText, "？") {
+					sepStr = "？"
 				}
 				splitResp := strings.Split(strings.TrimSpace(fullRespText), sepStr)
 				fullRespSlice = append(fullRespSlice, strings.TrimSpace(splitResp[0])+sepStr)

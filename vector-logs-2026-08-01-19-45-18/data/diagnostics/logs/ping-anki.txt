@@ -1,0 +1,9 @@
+PING anki.com (52.152.249.185): 56 data bytes
+64 bytes from 52.152.249.185: seq=0 ttl=100 time=278.617 ms
+64 bytes from 52.152.249.185: seq=1 ttl=100 time=274.828 ms
+64 bytes from 52.152.249.185: seq=2 ttl=100 time=279.282 ms
+64 bytes from 52.152.249.185: seq=3 ttl=100 time=282.619 ms
+
+--- anki.com ping statistics ---
+4 packets transmitted, 4 packets received, 0% packet loss
+round-trip min/avg/max = 274.828/278.836/282.619 ms

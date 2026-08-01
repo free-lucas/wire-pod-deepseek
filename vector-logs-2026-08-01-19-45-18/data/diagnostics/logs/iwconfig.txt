@@ -1,0 +1,9 @@
+wlan0     Qcom:802.11n  ESSID:"ChinaNet-1703"  Nickname:""
+          Frequency:2.437 GHz  Access Point: A2:36:79:9C:7F:50   Bit Rate=6.5 Mb/s   
+          Tx-Power=17 dBm   
+          RTS thr=2347 B   Fragment thr=8000 B   
+          Encryption key:C7B6-1A3B-093B-A903-73BA-0301-B9B9-F4DC [3]   Security mode:restricted
+          Link Quality=19/0  Signal level=-41 dBm  Noise level=-60 dBm
+          Rx invalid nwid:0  Rx invalid crypt:0  Rx invalid frag:0
+          Tx excessive retries:0  Invalid misc:0   Missed beacon:0
+

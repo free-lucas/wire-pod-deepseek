@@ -33,6 +33,10 @@
               name="icon"></i><br />Knowledge Graph</a>
         </div>
         <div class="main-nav-child">
+          <a href="#" onclick="showTTS(); return false;"><i class="fa solid fa-volume-high" id="icon-TTS"
+              name="icon"></i><br />TTS Settings</a>
+        </div>
+        <div class="main-nav-child">
           <a href="#" onclick="showLanguage(); return false;"><i class="fa-solid fa-language" id="icon-Language"
               name="icon"></i><br />Set Language</a>
         </div>
@@ -81,6 +85,7 @@
             <label for="kgProvider">Knowledge Graph API Provider:</label>
             <select name="kgProvider" id="kgProvider" form="kgAPIAddForm" onchange="checkKG()">
               <option value="" selected>None</option>
+              <option value="deepseek">DeepSeek</option>
               <option value="openai">OpenAI</option>
               <option value="houndify">Houndify</option>
               <option value="together">Together</option>
@@ -112,6 +117,23 @@
                   Vector. Keep the response concise yet
                   informative.")</label></small>
               <input type="text" name="togetherAIPrompt" id="togetherAIPrompt" /><br />
+            </span>
+            <span id="deepSeekInput" style="display: none">
+              <small class="desc">To use DeepSeek, create an account at
+                <a href="https://platform.deepseek.com">platform.deepseek.com</a>
+                and enter your API key here.</small><br />
+              <label for="deepseekKey">DeepSeek Key:</label>
+              <input type="text" name="deepseekKey" id="deepseekKey" /><br />
+              <label for="deepseekModel">DeepSeek Model:</label><br />
+              <select name="deepseekModel" id="deepseekModel">
+                <option value="deepseek-v4-flash" selected>deepseek-v4-flash</option>
+                <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+              </select><br />
+              <label for="deepseekPrompt">GPT Prompt <small class="desc">(leave blank for default):</small></label><br />
+              <small><label class="desc" for="deepseekPrompt">(default: "You are a helpful, animated robot called
+                  Vector. Keep the response concise yet
+                  informative.")</label></small>
+              <input type="text" name="deepseekPrompt" id="deepseekPrompt" /><br />
             </span>
             <span id="openAIInput" style="display: none">
               <label for="openaiKey">OpenAI Key:</label>
@@ -192,6 +214,44 @@
         <hr />
       </div>
 
+      <div id="section-tts" style="display: none">
+        <h3>TTS Settings</h3>
+        <p>语音合成 TTS 配置</p>
+        <hr class="small-hr">
+        <div>
+          <p>Select the TTS provider you would like to use, then enter the required information.</p>
+          <hr class="small-hr">
+          <div id="addTTSProviderAPI"></div>
+          <form id="ttsAPIAddForm">
+            <label for="ttsProvider">TTS API Provider:</label>
+            <select name="ttsProvider" id="ttsProvider" form="ttsAPIAddForm" onchange="checkTTS()">
+              <option value="" selected>None</option>
+              <option value="volcengine">火山引擎豆包 TTS（推荐）</option>
+              <option value="local">本地 TTS 服务器</option>
+            </select>
+            <span id="volcengineInput" style="display: none">
+              <small class="desc">To use Volcengine TTS, create an application at
+                <a href="https://console.volcengine.com/speech/service/16">console.volcengine.com</a>
+                and enter your API Key here.</small><br />
+              <label for="ttsVolcengineAPIKey">API Key:</label>
+              <input type="password" name="ttsVolcengineAPIKey" id="ttsVolcengineAPIKey" /><br />
+              <label for="ttsVolcengineVoice">Voice:</label>
+              <input type="text" name="ttsVolcengineVoice" id="ttsVolcengineVoice" /><br />
+              <small class="desc">Example voice: zh_female_vv_uranus_bigtts</small>
+            </span>
+            <span id="localTTSInput" style="display: none">
+              <small class="desc">Enter the URL of your local TTS server.</small><br />
+              <label for="ttsLocalURL">TTS 服务器地址:</label>
+              <input type="text" name="ttsLocalURL" id="ttsLocalURL" /><br />
+            </span>
+          </form>
+        </div>
+        <hr class="small-hr">
+        <button onclick="sendTTSAPIKey()">Apply TTS Settings</button>
+        <div id="addTTSProviderAPIStatus"></div>
+        <hr />
+      </div>
+
       <div id="section-restart" style="display: none">
         <h3>Restart Wire-Pod</h3>
         <div>
@@ -249,6 +309,7 @@
 <script>
   updateWeatherAPI();
   updateKGAPI();
+  updateTTSAPI();
 </script>
 
 </html>

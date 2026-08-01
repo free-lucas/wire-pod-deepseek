@@ -246,6 +246,7 @@ function checkKG() {
   const provider = getE("kgProvider").value;
   const elements = [
     "houndifyInput",
+    "deepSeekInput",
     "togetherInput",
     "customAIInput",
     "intentGraphInput",
@@ -260,6 +261,11 @@ function checkKG() {
   if (provider) {
     if (provider === "houndify") {
       getE("houndifyInput").style.display = "block";
+    } else if (provider === "deepseek") {
+      getE("intentGraphInput").style.display = "block";
+      getE("deepSeekInput").style.display = "block";
+      getE("saveChatInput").style.display = "block";
+      getE("llmCommandInput").style.display = "block";
     } else if (provider === "openai") {
       getE("intentGraphInput").style.display = "block";
       getE("openAIInput").style.display = "block";
@@ -313,6 +319,13 @@ function sendKGAPIKey() {
     data.intentgraph = getE("intentyes").checked
     data.save_chat = getE("saveChatYes").checked
     data.commands_enable = getE("commandYes").checked
+  } else if (provider === "deepseek") {
+    data.key = getE("deepseekKey").value;
+    data.model = getE("deepseekModel").value || "deepseek-v4-flash";
+    data.openai_prompt = getE("deepseekPrompt").value;
+    data.intentgraph = getE("intentyes").checked
+    data.save_chat = getE("saveChatYes").checked
+    data.commands_enable = getE("commandYes").checked
   } else if (provider === "together") {
     data.key = getE("togetherKey").value;
     data.model = getE("togetherModel").value;
@@ -356,7 +369,14 @@ function updateKGAPI() {
     .then((response) => response.json())
     .then((data) => {
       getE("kgProvider").value = data.provider;
-      if (data.provider === "openai") {
+      if (data.provider === "deepseek") {
+        getE("deepseekKey").value = data.key;
+        getE("deepseekModel").value = data.model || "deepseek-v4-flash";
+        getE("deepseekPrompt").value = data.openai_prompt;
+        getE("commandYes").checked = data.commands_enable
+        getE("intentyes").checked = data.intentgraph
+        getE("saveChatYes").checked = data.save_chat
+      } else if (data.provider === "openai") {
         getE("openaiKey").value = data.key;
         getE("openAIPrompt").value = data.openai_prompt;
         getE("openaiVoice").value = data.openai_voice;
@@ -385,6 +405,74 @@ function updateKGAPI() {
       }
       checkKG();
     });
+}
+
+function checkTTS() {
+  const provider = getE("ttsProvider").value;
+  const elements = ["volcengineInput", "localTTSInput"];
+
+  elements.forEach((el) => (getE(el).style.display = "none"));
+
+  if (provider) {
+    if (provider === "volcengine") {
+      getE("volcengineInput").style.display = "block";
+    } else if (provider === "local") {
+      getE("localTTSInput").style.display = "block";
+    }
+  }
+}
+
+function sendTTSAPIKey() {
+  const provider = getE("ttsProvider").value;
+  const data = {
+    tts_provider: provider,
+    tts_volcengine_api_key: "",
+    tts_volcengine_voice: "",
+    tts_local_url: "",
+  };
+
+  if (provider === "volcengine") {
+    data.tts_volcengine_api_key = getE("ttsVolcengineAPIKey").value;
+    data.tts_volcengine_voice = getE("ttsVolcengineVoice").value;
+  } else if (provider === "local") {
+    data.tts_local_url = getE("ttsLocalURL").value;
+  }
+
+  displayMessage("addTTSProviderAPIStatus", "Saving...");
+
+  fetch("/api/set_kg_api", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  })
+    .then((response) => response.text())
+    .then((response) => {
+      displayMessage("addTTSProviderAPIStatus", response);
+      alert(response);
+    });
+}
+
+function updateTTSAPI() {
+  fetch("/api/get_kg_api")
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.TTSProvider) {
+        getE("ttsProvider").value = data.TTSProvider;
+        if (data.TTSProvider === "volcengine") {
+          getE("ttsVolcengineAPIKey").value = data.TTSVolcengineAPIKey || "";
+          getE("ttsVolcengineVoice").value = data.TTSVolcengineVoice || "";
+        } else if (data.TTSProvider === "local") {
+          getE("ttsLocalURL").value = data.TTSLocalURL || "";
+        }
+        checkTTS();
+      }
+    });
+}
+
+function showTTS() {
+  toggleVisibility(["section-weather", "section-restart", "section-language", "section-kg", "section-tts"], "section-tts", "icon-TTS");
 }
 
 function setSTTLanguage() {
@@ -570,7 +658,7 @@ function checkUpdate() {
 }
 
 function showLanguage() {
-  toggleVisibility(["section-weather", "section-restart", "section-kg", "section-language"], "section-language", "icon-Language");
+  toggleVisibility(["section-weather", "section-restart", "section-kg", "section-language", "section-tts"], "section-language", "icon-Language");
   fetch("/api/get_stt_info")
     .then((response) => response.json())
     .then((parsed) => {
@@ -594,11 +682,11 @@ function showIntents() {
 }
 
 function showWeather() {
-  toggleVisibility(["section-weather", "section-restart", "section-language", "section-kg"], "section-weather", "icon-Weather");
+  toggleVisibility(["section-weather", "section-restart", "section-language", "section-kg", "section-tts"], "section-weather", "icon-Weather");
 }
 
 function showKG() {
-  toggleVisibility(["section-weather", "section-restart", "section-language", "section-kg"], "section-kg", "icon-KG");
+  toggleVisibility(["section-weather", "section-restart", "section-language", "section-kg", "section-tts"], "section-kg", "icon-KG");
 }
 
 function toggleVisibility(sections, sectionToShow, iconId) {

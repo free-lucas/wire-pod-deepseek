@@ -21,6 +21,85 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
+func ensureKnowledgeConfigDefaults() {
+	if vars.NormalizeKnowledgeConfig() {
+		vars.WriteConfigToDisk()
+	}
+}
+
+func logKnowledgeError(message string) error {
+	logger.Println(message)
+	logger.LogUI(message)
+	return errors.New(message)
+}
+
+func knowledgeModel(gpt3tryagain bool) (string, error) {
+	if gpt3tryagain {
+		return openai.GPT3Dot5Turbo, nil
+	}
+
+	ensureKnowledgeConfigDefaults()
+
+	switch vars.APIConfig.Knowledge.Provider {
+	case vars.KnowledgeProviderOpenAI:
+		return openai.GPT4oMini, nil
+	case vars.KnowledgeProviderTogether:
+		if vars.APIConfig.Knowledge.Model == "" {
+			return "", logKnowledgeError("Together knowledge provider is missing model.")
+		}
+		return vars.APIConfig.Knowledge.Model, nil
+	case vars.KnowledgeProviderCustom:
+		if vars.APIConfig.Knowledge.Model == "" {
+			return "", logKnowledgeError("Custom knowledge provider is missing model.")
+		}
+		return vars.APIConfig.Knowledge.Model, nil
+	case vars.KnowledgeProviderDeepSeek:
+		if vars.APIConfig.Knowledge.Model == "" {
+			return "", logKnowledgeError("DeepSeek knowledge provider is missing model.")
+		}
+		return vars.APIConfig.Knowledge.Model, nil
+	default:
+		return "", logKnowledgeError("Unsupported knowledge provider: " + vars.APIConfig.Knowledge.Provider)
+	}
+}
+
+func newKnowledgeClient() (*openai.Client, error) {
+	ensureKnowledgeConfigDefaults()
+
+	key := strings.TrimSpace(vars.APIConfig.Knowledge.Key)
+
+	switch vars.APIConfig.Knowledge.Provider {
+	case vars.KnowledgeProviderOpenAI:
+		if key == "" {
+			return nil, logKnowledgeError("OpenAI knowledge provider is missing API key.")
+		}
+		return openai.NewClient(key), nil
+	case vars.KnowledgeProviderTogether:
+		if key == "" {
+			return nil, logKnowledgeError("Together knowledge provider is missing API key.")
+		}
+		conf := openai.DefaultConfig(key)
+		conf.BaseURL = vars.TogetherBaseURL
+		return openai.NewClientWithConfig(conf), nil
+	case vars.KnowledgeProviderCustom:
+		if vars.APIConfig.Knowledge.Endpoint == "" {
+			return nil, logKnowledgeError("Custom knowledge provider is missing endpoint.")
+		}
+		conf := openai.DefaultConfig(key)
+		conf.BaseURL = vars.APIConfig.Knowledge.Endpoint
+		return openai.NewClientWithConfig(conf), nil
+	case vars.KnowledgeProviderDeepSeek:
+		if key == "" {
+			return nil, logKnowledgeError("DeepSeek knowledge provider is missing API key.")
+		}
+		conf := openai.DefaultConfig(key)
+		conf.BaseURL = vars.DeepSeekBaseURL
+		return openai.NewClientWithConfig(conf), nil
+	default:
+		return nil, logKnowledgeError("Unsupported knowledge provider: " + vars.APIConfig.Knowledge.Provider)
+	}
+}
+
 func GetChat(esn string) vars.RememberedChat {
 	for _, chat := range vars.RememberedChats {
 		if chat.ESN == esn {
@@ -134,7 +213,7 @@ func removeEmojis(input string) string {
 	return result
 }
 
-func CreateAIReq(transcribedText, esn string, gpt3tryagain, isKG bool) openai.ChatCompletionRequest {
+func CreateAIReq(transcribedText, esn string, gpt3tryagain, isKG bool) (openai.ChatCompletionRequest, error) {
 	defaultPrompt := "You are a helpful, animated robot called Vector. Keep the response concise yet informative."
 
 	var nChat []openai.ChatCompletionMessage
@@ -148,17 +227,11 @@ func CreateAIReq(transcribedText, esn string, gpt3tryagain, isKG bool) openai.Ch
 		smsg.Content = defaultPrompt
 	}
 
-	var model string
-
-	if gpt3tryagain {
-		model = openai.GPT3Dot5Turbo
-	} else if vars.APIConfig.Knowledge.Provider == "openai" {
-		model = openai.GPT4oMini
-		logger.Println("Using " + model)
-	} else {
-		logger.Println("Using " + vars.APIConfig.Knowledge.Model)
-		model = vars.APIConfig.Knowledge.Model
+	model, err := knowledgeModel(gpt3tryagain)
+	if err != nil {
+		return openai.ChatCompletionRequest{}, err
 	}
+	logger.Println("Using " + model)
 
 	smsg.Content = CreatePrompt(smsg.Content, model, isKG)
 
@@ -183,7 +256,7 @@ func CreateAIReq(transcribedText, esn string, gpt3tryagain, isKG bool) openai.Ch
 		Messages:         nChat,
 		Stream:           true,
 	}
-	return aireq
+	return aireq, nil
 }
 
 func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bool) (string, error) {
@@ -238,34 +311,48 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 	var fullfullRespText string
 	var fullRespSlice []string
 	var isDone bool
-	var c *openai.Client
-	if vars.APIConfig.Knowledge.Provider == "together" {
-		if vars.APIConfig.Knowledge.Model == "" {
-			vars.APIConfig.Knowledge.Model = "meta-llama/Llama-3-70b-chat-hf"
-			vars.WriteConfigToDisk()
+	c, err := newKnowledgeClient()
+	if err != nil {
+		if isKG {
+			kgStopLooping = true
+			for range kgReadyToAnswer {
+				break
+			}
+			stop <- true
+			time.Sleep(time.Second / 3)
+			KGSim(esn, "There was an error getting data from the L. L. M.")
 		}
-		conf := openai.DefaultConfig(vars.APIConfig.Knowledge.Key)
-		conf.BaseURL = "https://api.together.xyz/v1"
-		c = openai.NewClientWithConfig(conf)
-	} else if vars.APIConfig.Knowledge.Provider == "custom" {
-		conf := openai.DefaultConfig(vars.APIConfig.Knowledge.Key)
-		conf.BaseURL = vars.APIConfig.Knowledge.Endpoint
-		c = openai.NewClientWithConfig(conf)
-	} else if vars.APIConfig.Knowledge.Provider == "openai" {
-		c = openai.NewClient(vars.APIConfig.Knowledge.Key)
+		return "", err
 	}
 	speakReady := make(chan string)
 	successIntent := make(chan bool)
 
-	aireq := CreateAIReq(transcribedText, esn, false, isKG)
+	aireq, err := CreateAIReq(transcribedText, esn, false, isKG)
+	if err != nil {
+		if isKG {
+			kgStopLooping = true
+			for range kgReadyToAnswer {
+				break
+			}
+			stop <- true
+			time.Sleep(time.Second / 3)
+			KGSim(esn, "There was an error getting data from the L. L. M.")
+		}
+		return "", err
+	}
 
 	stream, err := c.CreateChatCompletionStream(ctx, aireq)
 	if err != nil {
-        	log.Printf("Error creating chat completion stream: %v", err)
+		log.Printf("Error creating chat completion stream: %v", err)
+		logger.Println("Knowledge provider stream error: " + err.Error())
+		logger.LogUI("Knowledge provider stream error: " + err.Error())
 		if strings.Contains(err.Error(), "does not exist") && vars.APIConfig.Knowledge.Provider == "openai" {
 			logger.Println("GPT-4 model cannot be accessed with this API key. You likely need to add more than $5 dollars of funds to your OpenAI account.")
 			logger.LogUI("GPT-4 model cannot be accessed with this API key. You likely need to add more than $5 dollars of funds to your OpenAI account.")
-			aireq := CreateAIReq(transcribedText, esn, true, isKG)
+			aireq, err = CreateAIReq(transcribedText, esn, true, isKG)
+			if err != nil {
+				return "", err
+			}
 			logger.Println("Falling back to " + aireq.Model)
 			logger.LogUI("Falling back to " + aireq.Model)
 			stream, err = c.CreateChatCompletionStream(ctx, aireq)
@@ -345,14 +432,14 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 				return
 			}
 
-            		if (len(response.Choices) == 0) {
-                		logger.Println("Empty response")
-                		return
-            		}
+			if len(response.Choices) == 0 {
+				logger.Println("Empty response")
+				return
+			}
 
 			fullfullRespText = fullfullRespText + removeSpecialCharacters(response.Choices[0].Delta.Content)
 			fullRespText = fullRespText + removeSpecialCharacters(response.Choices[0].Delta.Content)
-			if strings.Contains(fullRespText, "...") || strings.Contains(fullRespText, ".'") || strings.Contains(fullRespText, ".\"") || strings.Contains(fullRespText, ".") || strings.Contains(fullRespText, "?") || strings.Contains(fullRespText, "!") {
+			if strings.Contains(fullRespText, "...") || strings.Contains(fullRespText, ".'") || strings.Contains(fullRespText, ".\"") || strings.Contains(fullRespText, ".") || strings.Contains(fullRespText, "?") || strings.Contains(fullRespText, "!") || strings.Contains(fullRespText, "。") || strings.Contains(fullRespText, "！") || strings.Contains(fullRespText, "？") {
 				var sepStr string
 				if strings.Contains(fullRespText, "...") {
 					sepStr = "..."
@@ -366,6 +453,12 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 					sepStr = "?"
 				} else if strings.Contains(fullRespText, "!") {
 					sepStr = "!"
+				} else if strings.Contains(fullRespText, "。") {
+					sepStr = "。"
+				} else if strings.Contains(fullRespText, "！") {
+					sepStr = "！"
+				} else if strings.Contains(fullRespText, "？") {
+					sepStr = "？"
 				}
 				splitResp := strings.Split(strings.TrimSpace(fullRespText), sepStr)
 				fullRespSlice = append(fullRespSlice, strings.TrimSpace(splitResp[0])+sepStr)

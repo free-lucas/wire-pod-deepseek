@@ -187,6 +187,10 @@ func Init() {
 		os.Mkdir(Certs, 0777)
 	}
 
+	// Ensure jdocs and session-certs directories exist (also needed in non-packaged mode)
+	os.MkdirAll(JdocsDir, 0777)
+	os.MkdirAll(SessionCertPath, 0777)
+
 	if os.Getenv("WEBSERVER_PORT") != "" {
 		if _, err := strconv.Atoi(os.Getenv("WEBSERVER_PORT")); err == nil {
 			WebPort = os.Getenv("WEBSERVER_PORT")

@@ -1,0 +1,10 @@
+- [x] 设置页中存在 `DeepSeek` 作为独立知识问答 provider 选项
+- [x] 选择 `DeepSeek` 后，页面可配置启用状态、API Key、模型，并能保存与回填
+- [x] DeepSeek 配置保存时向 `/api/set_kg_api` 提交 `provider=deepseek`
+- [x] 后端读取 `provider=deepseek` 时，客户端 `base_url` 固定为 `https://api.deepseek.com`
+- [x] DeepSeek 对话请求使用官方 `POST /chat/completions` 兼容路径
+- [x] 未指定模型时默认使用 `deepseek-v4-flash`
+- [x] 启用 DeepSeek 后，知识问答请求不再走本地 Ollama endpoint
+- [x] `custom` provider 仍可继续用于 Ollama 或其他 OpenAI 兼容服务
+- [x] OpenAI 专属 TTS 相关配置未被 DeepSeek 接入误改
+- [x] 至少完成一次设置页与知识问答主链路的回归验证

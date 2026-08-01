@@ -1,0 +1,24 @@
+# Checklist
+
+- [x] `apiConfig` 包含 `TTS` 结构体，字段：`Provider`、`VolcengineAppID`、`VolcengineAccessKey`、`VolcengineVoice`、`LocalURL`
+- [x] `TTSProviderVolcengine`、`TTSProviderLocal` 常量已定义
+- [x] `NormalizeTTSConfig()` 设置默认 Provider 为 `volcengine`，Voice 为 `zh_female_qingxin`
+- [x] `WriteConfigToDisk()` 调用 `NormalizeTTSConfig()`
+- [x] `say_volcengine.go` 存在，实现 `DoSayText_Volcengine`
+- [x] 火山引擎请求正确携带 `X-Api-App-Key`、`X-Api-Access-Key`、`X-Api-Resource-Id` headers
+- [x] NDJSON 流式响应正确解析，base64 音频数据拼接为 PCM
+- [x] PCM 音频通过 ExternalAudioStreamPlayback 播放
+- [x] `DoSayText` 根据 `TTS.Provider` 路由
+- [x] Provider 为 `volcengine` 时调用 `DoSayText_Volcengine`
+- [x] Provider 为 `local` 时调用本地 TTS，使用配置的 LocalURL
+- [x] Provider 为 `openai` 时保留原有逻辑（向后兼容）
+- [x] `DoSayText_DeepSeek` 已删除
+- [x] `callTTSAPI` 接受 URL 参数，不再硬编码地址
+- [x] `handleSetKGAPI` 能保存 TTS 配置字段
+- [x] `handleGetKGAPI` 能返回 TTS 配置字段
+- [x] 网页配置页有 TTS 区域，Provider 下拉可选火山引擎 / 本地 TTS
+- [x] 选择火山引擎时显示 APP ID、Access Key、Voice
+- [x] 选择本地时显示 Local URL
+- [x] 页面加载时正确回填 TTS 配置
+- [x] `go build` 编译通过
+- [ ] 服务重启后机器人中文发音正常（需用户获取火山引擎 API Key 后测试）

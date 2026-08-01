@@ -203,18 +203,45 @@ func handleGetWeatherAPI(w http.ResponseWriter) {
 }
 
 func handleSetKGAPI(w http.ResponseWriter, r *http.Request) {
-	if err := json.NewDecoder(r.Body).Decode(&vars.APIConfig.Knowledge); err != nil {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := json.Unmarshal(body, &vars.APIConfig.Knowledge); err != nil {
 		fmt.Println(err)
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	var ttsConfig struct {
+		Provider         string `json:"tts_provider"`
+		VolcengineAPIKey string `json:"tts_volcengine_api_key"`
+		VolcengineVoice  string `json:"tts_volcengine_voice"`
+		LocalURL         string `json:"tts_local_url"`
+	}
+	if err := json.Unmarshal(body, &ttsConfig); err != nil {
+		fmt.Println(err)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	vars.APIConfig.TTS.Provider = ttsConfig.Provider
+	vars.APIConfig.TTS.VolcengineAPIKey = ttsConfig.VolcengineAPIKey
+	vars.APIConfig.TTS.VolcengineVoice = ttsConfig.VolcengineVoice
+	vars.APIConfig.TTS.LocalURL = ttsConfig.LocalURL
 	vars.WriteConfigToDisk()
 	fmt.Fprint(w, "Changes successfully applied.")
 }
 
 func handleGetKGAPI(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(vars.APIConfig.Knowledge)
+	kgBytes, _ := json.Marshal(vars.APIConfig.Knowledge)
+	var result map[string]interface{}
+	json.Unmarshal(kgBytes, &result)
+	result["TTSProvider"] = vars.APIConfig.TTS.Provider
+	result["TTSVolcengineAPIKey"] = vars.APIConfig.TTS.VolcengineAPIKey
+	result["TTSVolcengineVoice"] = vars.APIConfig.TTS.VolcengineVoice
+	result["TTSLocalURL"] = vars.APIConfig.TTS.LocalURL
+	json.NewEncoder(w).Encode(result)
 }
 
 func handleSetSTTInfo(w http.ResponseWriter, r *http.Request) {

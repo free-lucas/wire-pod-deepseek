@@ -3,6 +3,7 @@ package vars
 import (
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 )
@@ -12,6 +13,28 @@ import (
 var ApiConfigPath = "./apiConfig.json"
 
 var APIConfig apiConfig
+
+const (
+	KnowledgeProviderOpenAI   = "openai"
+	KnowledgeProviderTogether = "together"
+	KnowledgeProviderCustom   = "custom"
+	KnowledgeProviderDeepSeek = "deepseek"
+
+	TogetherBaseURL           = "https://api.together.xyz/v1"
+	TogetherDefaultModel      = "meta-llama/Llama-3-70b-chat-hf"
+	DeepSeekBaseURL           = "https://api.deepseek.com"
+	DeepSeekDefaultModel      = "deepseek-v4-flash"
+	DeepSeekProModel          = "deepseek-v4-pro"
+	CustomKnowledgeDefaultKey = "ollama"
+
+	TTSProviderVolcengine = "volcengine"
+	TTSProviderLocal      = "local"
+
+	VolcengineTTSURL       = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+	VolcengineResourceID   = "seed-tts-2.0"
+	VolcengineDefaultVoice = "zh_female_qingxin"
+	LocalTTSDefaultURL     = "http://192.168.1.35:8000/generate_voice"
+)
 
 type apiConfig struct {
 	Weather struct {
@@ -37,6 +60,12 @@ type apiConfig struct {
 		TopP                   float32 `json:"top_p"`
 		Temperature            float32 `json:"temp"`
 	} `json:"knowledge"`
+	TTS struct {
+		Provider         string `json:"provider"`
+		VolcengineAPIKey string `json:"volcengine_api_key"`
+		VolcengineVoice  string `json:"volcengine_voice"`
+		LocalURL         string `json:"local_url"`
+	} `json:"TTS"`
 	STT struct {
 		Service  string `json:"provider"`
 		Language string `json:"language"`
@@ -51,6 +80,8 @@ type apiConfig struct {
 }
 
 func WriteConfigToDisk() {
+	NormalizeKnowledgeConfig()
+	NormalizeTTSConfig()
 	logger.Println("Configuration changed, writing to disk")
 	writeBytes, _ := json.Marshal(APIConfig)
 	os.WriteFile(ApiConfigPath, writeBytes, 0644)
@@ -78,8 +109,7 @@ func CreateConfigFromEnv() {
 	}
 	WriteSTT()
 	APIConfig.HasReadFromEnv = true
-	writeBytes, _ := json.Marshal(APIConfig)
-	os.WriteFile(ApiConfigPath, writeBytes, 0644)
+	WriteConfigToDisk()
 }
 
 func WriteSTT() {
@@ -89,6 +119,91 @@ func WriteSTT() {
 	if os.Getenv("STT_SERVICE") == "vosk" || os.Getenv("STT_SERVICE") == "whisper.cpp" {
 		APIConfig.STT.Language = os.Getenv("STT_LANGUAGE")
 	}
+}
+
+func NormalizeKnowledgeConfig() bool {
+	changed := false
+
+	knowledge := &APIConfig.Knowledge
+	provider := strings.TrimSpace(knowledge.Provider)
+	if knowledge.Provider != provider {
+		knowledge.Provider = provider
+		changed = true
+	}
+
+	key := strings.TrimSpace(knowledge.Key)
+	if knowledge.Key != key {
+		knowledge.Key = key
+		changed = true
+	}
+
+	model := strings.TrimSpace(knowledge.Model)
+	if knowledge.Model != model {
+		knowledge.Model = model
+		changed = true
+	}
+
+	endpoint := strings.TrimSpace(knowledge.Endpoint)
+	if knowledge.Endpoint != endpoint {
+		knowledge.Endpoint = endpoint
+		changed = true
+	}
+
+	switch knowledge.Provider {
+	case KnowledgeProviderTogether:
+		if knowledge.Model == "" {
+			logger.Println("Together knowledge provider missing model, defaulting to " + TogetherDefaultModel)
+			knowledge.Model = TogetherDefaultModel
+			changed = true
+		}
+	case KnowledgeProviderCustom:
+		if knowledge.Key == "" {
+			logger.Println("Custom knowledge provider missing API key, defaulting to 'ollama' for OpenAI-compatible backends")
+			knowledge.Key = CustomKnowledgeDefaultKey
+			changed = true
+		}
+	case KnowledgeProviderDeepSeek:
+		if knowledge.Model == "" {
+			logger.Println("DeepSeek knowledge provider missing model, defaulting to " + DeepSeekDefaultModel)
+			knowledge.Model = DeepSeekDefaultModel
+			changed = true
+		}
+		if knowledge.Model != DeepSeekDefaultModel && knowledge.Model != DeepSeekProModel {
+			logger.Println("DeepSeek knowledge provider only supports " + DeepSeekDefaultModel + " or " + DeepSeekProModel + "; defaulting to " + DeepSeekDefaultModel)
+			knowledge.Model = DeepSeekDefaultModel
+			changed = true
+		}
+		if knowledge.Endpoint != "" {
+			logger.Println("DeepSeek knowledge provider ignores custom endpoints; clearing saved endpoint")
+			knowledge.Endpoint = ""
+			changed = true
+		}
+	}
+
+	return changed
+}
+
+func NormalizeTTSConfig() bool {
+	changed := false
+	tts := &APIConfig.TTS
+	provider := strings.TrimSpace(tts.Provider)
+	if tts.Provider != provider {
+		tts.Provider = provider
+		changed = true
+	}
+	if tts.Provider == "" {
+		tts.Provider = TTSProviderVolcengine
+		changed = true
+	}
+	if tts.VolcengineVoice == "" {
+		tts.VolcengineVoice = VolcengineDefaultVoice
+		changed = true
+	}
+	if tts.LocalURL == "" {
+		tts.LocalURL = LocalTTSDefaultURL
+		changed = true
+	}
+	return changed
 }
 
 func ReadConfig() {
@@ -129,6 +244,8 @@ func ReadConfig() {
 			APIConfig.Knowledge.Model = "meta-llama/Llama-3-70b-chat-hf"
 		}
 
+		NormalizeKnowledgeConfig()
+		NormalizeTTSConfig()
 		writeBytes, _ := json.Marshal(APIConfig)
 		os.WriteFile(ApiConfigPath, writeBytes, 0644)
 		logger.Println("API config successfully read")

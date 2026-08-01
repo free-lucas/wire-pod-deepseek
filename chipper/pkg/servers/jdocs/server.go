@@ -147,20 +147,37 @@ func (s *JdocServer) ReadDocs(ctx context.Context, req *jdocspb.ReadDocsReq) (*j
 						},
 					}, nil
 				}
-				logger.Println("Bot not found in any store, providing global GUID")
-				return &jdocspb.ReadDocsResp{
-					Items: []*jdocspb.ReadDocsResp_Item{
-						{
-							Status: jdocspb.ReadDocsResp_CHANGED,
-							Doc: &jdocspb.Jdoc{
-								DocVersion:     1,
-								FmtVersion:     1,
-								ClientMetadata: "placeholder",
-								JsonDoc:        globalGUIDHash,
+				// Bot is known but token store was lost (e.g. after service restart).
+				// Rebuild AppTokens from persisted data instead of sending global GUID.
+				botHasValidGUID := false
+				for _, robot := range vars.BotInfo.Robots {
+					if strings.EqualFold(esn, robot.Esn) && robot.GUID != "" && robot.GUID != tokenserver.GlobalGUID {
+						botHasValidGUID = true
+						break
+					}
+				}
+				if botHasValidGUID {
+					logger.Println("Bot is known and has valid GUID, rebuilding AppTokens from persisted data")
+					// AppTokens jdoc may have been lost — regenerate it
+					_, newHash, _ := tokenserver.CreateTokenAndHashedToken()
+					tokenserver.WriteTokenHash(esn, newHash)
+					// fall through to normal jdocs return path (will read the just-written AppTokens)
+				} else {
+					logger.Println("Bot not found in any store, providing global GUID")
+					return &jdocspb.ReadDocsResp{
+						Items: []*jdocspb.ReadDocsResp_Item{
+							{
+								Status: jdocspb.ReadDocsResp_CHANGED,
+								Doc: &jdocspb.Jdoc{
+									DocVersion:     1,
+									FmtVersion:     1,
+									ClientMetadata: "placeholder",
+									JsonDoc:        globalGUIDHash,
+								},
 							},
 						},
-					},
-				}, nil
+					}, nil
+				}
 			}
 		}
 	}

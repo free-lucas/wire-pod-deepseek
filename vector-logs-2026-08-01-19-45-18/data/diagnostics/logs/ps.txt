@@ -1,0 +1,21 @@
+ 1452 root       0:27 /usr/bin/mm-anki-camera
+ 1825 bluetoot   0:00 /usr/bin/ankibluetoothd
+ 1898 root       0:00 /usr/bin/logwrapper /anki/bin/vic-crashuploader
+ 1905 root       0:00 {vic-crashupload} /bin/sh /anki/bin/vic-crashuploader
+ 1952 root       0:00 /usr/bin/logwrapper /anki/bin/vic-dasmgr
+ 1965 root       0:00 /anki/bin/vic-dasmgr
+ 1969 robot      1:13 /anki/bin/vic-robot
+ 1984 root       0:00 /usr/bin/logwrapper /anki/bin/vic-anim
+ 1985 root       4:55 /anki/bin/vic-anim
+ 2067 engine     0:00 /usr/bin/logwrapper /anki/bin/vic-engine
+ 2076 engine     3:35 /anki/bin/vic-engine
+ 2093 cloud      0:00 /usr/bin/logwrapper /anki/bin/vic-cloud
+ 2094 root       0:00 /usr/bin/logwrapper /anki/bin/vic-log-uploader
+ 2095 cloud      0:02 /anki/bin/vic-cloud
+ 2097 root       0:00 {vic-log-uploade} /bin/bash /anki/bin/vic-log-uploader
+ 2111 net        0:00 /usr/bin/logwrapper /anki/bin/vic-switchboard
+ 2112 net        0:03 /anki/bin/vic-switchboard
+ 2123 net        0:00 /usr/bin/logwrapper /anki/bin/vic-gateway
+ 2124 net        0:23 /anki/bin/vic-gateway
+ 2603 root       0:00 {diagnostics-log} /bin/bash /anki/bin/diagnostics-logger
+ 2611 root       0:00 {grep} /bin/busybox /bin/grep anki
