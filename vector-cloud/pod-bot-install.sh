@@ -1,6 +1,6 @@
 #!/bin/bash
 
-systemctl stop anki-robot.target mm-anki-camera mm-qcamera-daemon
+systemctl stop anki-robot.target
 echo "Resetting Vector to Onboarding mode (user data is NOT being reset, all faces and photos and stuff will persist), screen will be blank for a minute"
 sleep 2
 rm -f /data/data/com.anki.victor/persistent/token/token.jwt
@@ -17,9 +17,4 @@ sync
 sync
 vic-gateway-cert
 sync
-systemctl start mm-anki-camera
-sleep 2
-systemctl start mm-qcamera-daemon
-sleep 2
 systemctl start anki-robot.target
-

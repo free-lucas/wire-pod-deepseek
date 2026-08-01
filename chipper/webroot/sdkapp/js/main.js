@@ -15,31 +15,6 @@ esn = urlParams.get("serial");
 var client = new HttpClient();
 getCurrentSettings();
 
-const localeLabels = {
-  "en-US": "English (US)",
-  "en-GB": "English (GB)",
-  "en-AU": "English (AU)",
-  "de-DE": "German",
-  "fr-FR": "French",
-  "ja-JP": "Japanese",
-  "zh-CN": "Chinese (CN)",
-};
-
-function getButtonWakewordDisplay(buttonValue) {
-  return `${buttonValue}` == "0" ? "小智，小智" : "Alexa";
-}
-
-function getButtonWakewordRadioId(buttonValue) {
-  return `${buttonValue}` == "0" ? "WakewordXiaoZhi" : "WakewordAlexa";
-}
-
-function setCheckedIfExists(elementId) {
-  const element = document.getElementById(elementId);
-  if (element) {
-    element.checked = true;
-  }
-}
-
 function revealSdkActions() {
   var x = document.getElementById("sdkActions");
   x.style.display = "block";
@@ -393,9 +368,11 @@ function getCurrentSettings() {
     } else {
       var tempFormatT = "Celsius";
     }
-    var localeT = localeLabels[`${localeS}`] || `${localeS}`;
-    var buttonT = getButtonWakewordDisplay(buttonS);
-    var buttonRadioId = getButtonWakewordRadioId(buttonS);
+    if (`${buttonS}` == 0) {
+      var buttonT = "Hey Vector";
+    } else {
+      var buttonT = "Alexa";
+    }
 
     var s1 = document.getElementById("currentVolume");
     const s1P = document.createElement("p");
@@ -409,10 +386,7 @@ function getCurrentSettings() {
 
     var s3 = document.getElementById("currentLocale");
     const s3P = document.createElement("p");
-    s3P.textContent = "Current Locale Setting: " + localeT;
-    s3.innerHTML = "";
-    s3.appendChild(s3P);
-    setCheckedIfExists(`${localeS}`);
+    document.getElementById(localeS).checked = true;
 
     var s4 = document.getElementById("currentTimeSet");
     const s4P = document.createElement("p");
@@ -424,10 +398,7 @@ function getCurrentSettings() {
 
     var s6 = document.getElementById("currentButton");
     const s6P = document.createElement("p");
-    s6P.textContent = "Current Button Wakeword: " + buttonT;
-    s6.innerHTML = "";
-    s6.appendChild(s6P);
-    setCheckedIfExists(buttonRadioId);
+    document.getElementById(buttonT).checked = true;
 
     var s10 = document.getElementById("currentLocation");
     const s10P = document.createElement("p");

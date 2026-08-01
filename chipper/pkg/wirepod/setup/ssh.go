@@ -68,7 +68,7 @@ func SetupBotViaSSH(ip string, key []byte) error {
 				ssh.PublicKeys(signer),
 			},
 			HostKeyCallback:   ssh.InsecureIgnoreHostKey(),
-			HostKeyAlgorithms: []string{"ssh-rsa", "ecdsa-sha2-nistp256"},
+			HostKeyAlgorithms: []string{"ssh-rsa"},
 			Timeout:           time.Second * 5,
 		}
 		client, err := ssh.Dial("tcp", ip+":22", config)
@@ -84,20 +84,16 @@ func SetupBotViaSSH(ip string, key []byte) error {
 			return doErr(fmt.Errorf("the remote device is not a vector"), "checking if vector")
 		}
 		SetupSSHStatus = "Checking if Vector is running CFW..."
-		// outputWired, _ := runCmd(client, "cat /etc/wired/webroot/index.html")
-		var doCloud bool = true
-		var initCommand string = "mount -o rw,remount / && mount -o rw,remount,exec /data && systemctl stop anki-robot.target mm-anki-camera mm-qcamera-daemon"
-		output, err = runCmd(client, "head -n1 /anki/bin/vic-gateway")
+		output, err = runCmd(client, "cat /build.prop")
 		if err != nil {
-			if err.Error() == "Process exited with status 1" {
-				logger.Println("SSH setup: modern CFW detected, not copying vic-cloud")
-				//|| strings.Contains(outputWired, "revertDefaultWakeWord") {
-				initCommand = "mount -o rw,remount,exec /data && systemctl stop anki-robot.target mm-anki-camera mm-qcamera-daemon"
-				// my cfw already has a wire-pod compatible vic-cloud
-				doCloud = false
-			} else {
-				return doErr(err, "checking if cfw")
-			}
+			return doErr(err, "checking if cfw")
+		}
+		var doCloud bool = true
+		var initCommand string = "mount -o rw,remount / && mount -o rw,remount,exec /data && systemctl stop anki-robot.target"
+		if strings.Contains(output, "wire_os") {
+			initCommand = "mount -o rw,remount,exec /data && systemctl stop anki-robot.target"
+			// my cfw already has a wire-pod compatible vic-cloud
+			doCloud = false
 		}
 		SetupSSHStatus = "Running initial commands before transfers (screen will go blank, this is normal)..."
 		_, err = runCmd(client, initCommand)
@@ -122,7 +118,7 @@ func SetupBotViaSSH(ip string, key []byte) error {
 		if err != nil {
 			return doErr(err, "copying pod-bot-install")
 		}
-		scpClient.Close()
+		scpClient.Session.Close()
 		serverConfig, err := os.Open(vars.ServerConfigPath)
 		if err != nil {
 			return doErr(err, "opening server config on disk")
@@ -135,7 +131,7 @@ func SetupBotViaSSH(ip string, key []byte) error {
 		if err != nil {
 			return doErr(err, "copying server-config.json")
 		}
-		scpClient.Close()
+		scpClient.Session.Close()
 		if doCloud {
 			if runtime.GOOS != "android" && !vars.Packaged {
 				cloud, err := os.Open("../vector-cloud/build/vic-cloud")
@@ -183,7 +179,7 @@ func SetupBotViaSSH(ip string, key []byte) error {
 				}
 			}
 		}
-		scpClient.Close()
+		scpClient.Session.Close()
 		certPath := vars.CertPath
 		if vars.APIConfig.Server.EPConfig {
 			if runtime.GOOS == "android" || runtime.GOOS == "ios" {
@@ -204,7 +200,7 @@ func SetupBotViaSSH(ip string, key []byte) error {
 		if err != nil {
 			return doErr(err, "copying wire-pod cert")
 		}
-		scpClient.Close()
+		scpClient.Session.Close()
 		SetupSSHStatus = "Generating new robot certificate (this may take a while)..."
 		_, err = runCmd(client, "chmod +rwx /data/data/server_config.json /data/data/wirepod-cert.crt /data/pod-bot-install.sh && /data/pod-bot-install.sh")
 		if err != nil {

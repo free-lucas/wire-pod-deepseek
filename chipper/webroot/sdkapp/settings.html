@@ -176,15 +176,6 @@
           <button onclick="sendForm('/api-sdk/cloud_intent?intent=intent_system_charger')">Go
             Home</button>
         </div>
-        <hr class="small-hr">
-        <h3 class="center">Trigger 小智，小智</h3>
-        <p class="center">Trigger the "小智，小智" wakeword remotely</p>
-        <p class="center">Legacy endpoint remains for compatibility with the robot button wakeword enum.</p>
-        <p class="center">(Only Dev firmware and 2.0.1.6085ep or later)</p>
-        <div id="heyVectorStatus" class="center"></div>
-        <div class="center">
-          <button onclick="triggerHeyVector()">Trigger "小智，小智"</button>
-        </div>
         <hr>
       </div>
 
@@ -243,12 +234,8 @@
               onclick="sendForm('/api-sdk/locale?locale=fr-FR')">French<br>
           </label>
           <label>
-            <input type="radio" name="locale" id="ja-JP" value="Japanese"
+            <input type="radio" name="locale" id="ja-FP" value="Japanese"
               onclick="sendForm('/api-sdk/locale?locale=ja-JP')">Japanese<br>
-          </label>
-          <label>
-            <input type="radio" name="locale" id="zh-CN" value="Chinese (CN)"
-              onclick="sendForm('/api-sdk/locale?locale=zh-CN')">Chinese (CN)<br>
           </label>
         </div>
         <br>
@@ -297,11 +284,11 @@
         <div id="currentButton" class="center"></div>
         <div style="text-align: left;" class="center">
           <label>
-            <input type="radio" name="but" id="WakewordXiaoZhi" value="小智，小智"
-              onclick="sendForm('/api-sdk/button_hey_vector')">小智，小智<br>
+            <input type="radio" name="but" id="Hey Vector" value="Hey Vector"
+              onclick="sendForm('/api-sdk/button_hey_vector')">Hey Vector<br>
           </label>
           <label>
-            <input type="radio" name="but" id="WakewordAlexa" value="Alexa"
+            <input type="radio" name="but" id="Alexa" value="Alexa"
               onclick="sendForm('/api-sdk/button_alexa')">Alexa<br>
           </label>
         </div>
@@ -405,7 +392,6 @@
   <script src="./js/main.js"></script>
   <script src="./js/faces.js"></script>
   <script src="../js/ui.js"></script>
-  <script src="./js/heyvector.js"></script>
   <iframe name="hiddenFrame" width="0" height="0" border="0" style="display: none;"></iframe>
 
 </body>

@@ -1,12 +1,8 @@
 package voice
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -24,54 +20,6 @@ import (
 var (
 	verbose bool
 )
-
-// #region debug-point A:report-runtime-evidence
-func debugReportVoice(hypothesisID, location, message string, data map[string]interface{}) {
-	fallbackURL := "http://192.168.1.58:7777/event"
-	debugURL := fallbackURL
-	sessionID := "robot-wakeword-loss"
-	for _, envPath := range []string{
-		".dbg/robot-wakeword-loss.env",
-		"../.dbg/robot-wakeword-loss.env",
-		"../../.dbg/robot-wakeword-loss.env",
-	} {
-		envBytes, err := os.ReadFile(envPath)
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(envBytes), "\n") {
-			if strings.HasPrefix(line, "DEBUG_SERVER_URL=") {
-				debugURL = strings.TrimPrefix(line, "DEBUG_SERVER_URL=")
-			} else if strings.HasPrefix(line, "DEBUG_SESSION_ID=") {
-				sessionID = strings.TrimPrefix(line, "DEBUG_SESSION_ID=")
-			}
-		}
-		break
-	}
-	if strings.Contains(debugURL, "127.0.0.1") || strings.Contains(debugURL, "198.18.0.1") {
-		debugURL = fallbackURL
-	}
-	body, err := json.Marshal(map[string]interface{}{
-		"sessionId":    sessionID,
-		"runId":        "pre-fix",
-		"hypothesisId": hypothesisID,
-		"location":     location,
-		"msg":          "[DEBUG] " + message,
-		"data":         data,
-		"ts":           time.Now().UnixMilli(),
-	})
-	if err != nil {
-		return
-	}
-	req, err := http.NewRequest(http.MethodPost, debugURL, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	_, _ = http.DefaultClient.Do(req)
-}
-
-// #endregion
 
 const (
 	// DefaultAudioLenMs is the number of milliseconds of audio we send for connection checks
@@ -223,15 +171,6 @@ procloop:
 		// are not promptly read, socket buffers can fill up and break voice processing
 		select {
 		case msg := <-p.msg:
-			// #region debug-point D:incoming-message
-			if msg.msg.Tag() != cloud.MessageTag_Audio {
-				debugReportVoice("D", "vector-cloud/internal/voice/process.go:175", "received voice process message", map[string]interface{}{
-					"tag":       int(msg.msg.Tag()),
-					"isTest":    msg.isTest,
-					"hasStream": strm != nil,
-				})
-			}
-			// #endregion
 			switch msg.msg.Tag() {
 			case cloud.MessageTag_Hotword:
 				// hotword = get ready to stream data
@@ -248,16 +187,6 @@ procloop:
 				}
 
 				hw := msg.msg.GetHotword()
-				// #region debug-point A:hotword-received
-				debugReportVoice("A", "vector-cloud/internal/voice/process.go:199", "received hotword event", map[string]interface{}{
-					"mode":         int(hw.Mode),
-					"locale":       hw.Locale,
-					"timezone":     hw.Timezone,
-					"noLogging":    hw.NoLogging,
-					"robotVersion": robot.AnkiVersion(),
-					"isTest":       msg.isTest,
-				})
-				// #endregion
 				mode := hw.Mode
 				serverMode, ok := modeMap[mode]
 				if !ok && mode != cloud.StreamType_KnowledgeGraph {
@@ -267,7 +196,6 @@ procloop:
 
 				locale := hw.Locale
 				if locale == "" {
-					log.Println("voice: hotword locale is empty, defaulting to en-US before LanguageCode mapping")
 					locale = "en-US"
 				}
 				language, err := getLanguage(locale)
@@ -351,12 +279,6 @@ procloop:
 			}
 
 		case intent := <-cloudChans.intent:
-			// #region debug-point D:intent-result
-			debugReportVoice("D", "vector-cloud/internal/voice/process.go:292", "received cloud intent result", map[string]interface{}{
-				"matchesCurrentStream": intent.recvr.stream == strm,
-				"hasStream":            strm != nil,
-			})
-			// #endregion
 			if intent.recvr.stream != strm {
 				log.Println("Ignoring result from prior stream:", intent.result)
 				continue
@@ -392,12 +314,6 @@ procloop:
 			strm = nil
 
 		case open := <-cloudChans.open:
-			// #region debug-point D:stream-open
-			debugReportVoice("D", "vector-cloud/internal/voice/process.go:331", "cloud stream opened", map[string]interface{}{
-				"matchesCurrentStream": open.recvr.stream == strm,
-				"session":              open.session,
-			})
-			// #endregion
 			if open.recvr.stream != strm {
 				log.Println("Ignoring stream open from prior stream:", open.session)
 				continue
@@ -557,13 +473,8 @@ func getLanguage(locale string) (pb.LanguageCode, error) {
 		return pb.LanguageCode_GERMAN, nil
 	case "en":
 		break
-	case "zh":
-		log.Println("voice: locale", locale, "does not have a dedicated LanguageCode mapping here, falling back to English (US)")
-		return pb.LanguageCode_ENGLISH_US, nil
 	default:
-		// Unknown locales still fall back to en-US for compatibility, but we log
-		// them so that locale issues remain visible during Chinese wakeword work.
-		log.Println("voice: locale", locale, "is unsupported here, falling back to English (US)")
+		// unknown == default to en_US
 		return pb.LanguageCode_ENGLISH_US, nil
 	}
 

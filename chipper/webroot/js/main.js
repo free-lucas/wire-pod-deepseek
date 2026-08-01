@@ -260,7 +260,6 @@ function checkKG() {
   if (provider) {
     if (provider === "houndify") {
       getE("houndifyInput").style.display = "block";
-      getE("intentGraphInput").style.display = "block";
     } else if (provider === "openai") {
       getE("intentGraphInput").style.display = "block";
       getE("openAIInput").style.display = "block";
@@ -324,7 +323,6 @@ function sendKGAPIKey() {
   } else if (provider === "houndify") {
     data.key = getE("houndKey").value;
     data.id = getE("houndID").value;
-    data.intentgraph = getE("intentyes").checked
   } else {
     data.enable = false;
   }
@@ -384,15 +382,13 @@ function updateKGAPI() {
       } else if (data.provider === "houndify") {
         getE("houndKey").value = data.key;
         getE("houndID").value = data.id;
-        getE("intentyes").checked = data.intentgraph
       }
       checkKG();
     });
 }
 
 function setSTTLanguage() {
-  const selectedLanguage = getE("languageSelection").value;
-  const data = { language: selectedLanguage };
+  const data = { language: getE("languageSelection").value };
 
   displayMessage("languageStatus", "Setting...");
 
@@ -406,10 +402,7 @@ function setSTTLanguage() {
     .then((response) => response.text())
     .then((response) => {
       if (response.includes("downloading")) {
-        const waitingMessage = selectedLanguage === "zh-CN"
-          ? "Downloading zh-CN model..."
-          : "Downloading model...";
-        displayMessage("languageStatus", waitingMessage);
+        displayMessage("languageStatus", "Downloading model...");
         updateSTTLanguageDownload();
       } else {
         displayMessage("languageStatus", response);
@@ -582,14 +575,11 @@ function showLanguage() {
     .then((response) => response.json())
     .then((parsed) => {
       if (parsed.provider !== "vosk" && parsed.provider !== "whisper.cpp") {
-        displayError("languageStatus", `To set the STT language, the provider must be Vosk or Whisper.cpp. The current one is '${parsed.provider}'.`);
+        displayError("languageStatus", `To set the STT language, the provider must be Vosk or Whisper. The current one is '${parsed.sttProvider}'.`);
         getE("languageSelectionDiv").style.display = "none";
       } else {
         getE("languageSelectionDiv").style.display = "block";
         getE("languageSelection").value = parsed.language;
-        if (parsed.language === "zh-CN") {
-          displayMessage("languageStatus", "Current STT language: zh-CN");
-        }
       }
     });
 }

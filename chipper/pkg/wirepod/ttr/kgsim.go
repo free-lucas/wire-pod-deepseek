@@ -239,8 +239,7 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 	var fullRespSlice []string
 	var isDone bool
 	var c *openai.Client
-	switch vars.APIConfig.Knowledge.Provider {
-	case "together":
+	if vars.APIConfig.Knowledge.Provider == "together" {
 		if vars.APIConfig.Knowledge.Model == "" {
 			vars.APIConfig.Knowledge.Model = "meta-llama/Llama-3-70b-chat-hf"
 			vars.WriteConfigToDisk()
@@ -248,11 +247,11 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 		conf := openai.DefaultConfig(vars.APIConfig.Knowledge.Key)
 		conf.BaseURL = "https://api.together.xyz/v1"
 		c = openai.NewClientWithConfig(conf)
-	case "custom":
+	} else if vars.APIConfig.Knowledge.Provider == "custom" {
 		conf := openai.DefaultConfig(vars.APIConfig.Knowledge.Key)
 		conf.BaseURL = vars.APIConfig.Knowledge.Endpoint
 		c = openai.NewClientWithConfig(conf)
-	case "openai":
+	} else if vars.APIConfig.Knowledge.Provider == "openai" {
 		c = openai.NewClient(vars.APIConfig.Knowledge.Key)
 	}
 	speakReady := make(chan string)
@@ -262,7 +261,7 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 
 	stream, err := c.CreateChatCompletionStream(ctx, aireq)
 	if err != nil {
-		log.Printf("Error creating chat completion stream: %v", err)
+        	log.Printf("Error creating chat completion stream: %v", err)
 		if strings.Contains(err.Error(), "does not exist") && vars.APIConfig.Knowledge.Provider == "openai" {
 			logger.Println("GPT-4 model cannot be accessed with this API key. You likely need to add more than $5 dollars of funds to your OpenAI account.")
 			logger.LogUI("GPT-4 model cannot be accessed with this API key. You likely need to add more than $5 dollars of funds to your OpenAI account.")
@@ -346,10 +345,10 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 				return
 			}
 
-			if len(response.Choices) == 0 {
-				logger.Println("Empty response")
-				return
-			}
+            		if (len(response.Choices) == 0) {
+                		logger.Println("Empty response")
+                		return
+            		}
 
 			fullfullRespText = fullfullRespText + removeSpecialCharacters(response.Choices[0].Delta.Content)
 			fullRespText = fullRespText + removeSpecialCharacters(response.Choices[0].Delta.Content)

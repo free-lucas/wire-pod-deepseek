@@ -184,11 +184,10 @@ func getWeather(location string, botUnits string, hoursFromNow int) (string, str
 	}
 	if weatherEnabled {
 		if botUnits != "" {
-			switch botUnits {
-			case "F":
+			if botUnits == "F" {
 				logger.Println("Weather units set to F")
 				weatherAPIUnit = "F"
-			case "C":
+			} else if botUnits == "C" {
 				logger.Println("Weather units set to C")
 				weatherAPIUnit = "C"
 			}

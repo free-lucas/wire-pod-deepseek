@@ -24,68 +24,6 @@ import (
 
 var serverFiles string = "./webroot/sdkapp"
 
-// #region debug-point A:report-sdk-events
-func debugReportSDKEvent(hypothesisID, location, message string, data map[string]interface{}) {
-	fallbackURL := "http://192.168.1.58:7777/event"
-	debugURL := fallbackURL
-	sessionID := "robot-wakeword-loss"
-	for _, envPath := range []string{
-		".dbg/robot-wakeword-loss.env",
-		"../.dbg/robot-wakeword-loss.env",
-	} {
-		envBytes, err := os.ReadFile(envPath)
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(envBytes), "\n") {
-			if strings.HasPrefix(line, "DEBUG_SERVER_URL=") {
-				debugURL = strings.TrimPrefix(line, "DEBUG_SERVER_URL=")
-			} else if strings.HasPrefix(line, "DEBUG_SESSION_ID=") {
-				sessionID = strings.TrimPrefix(line, "DEBUG_SESSION_ID=")
-			}
-		}
-		break
-	}
-	if strings.Contains(debugURL, "127.0.0.1") || strings.Contains(debugURL, "198.18.0.1") {
-		debugURL = fallbackURL
-	}
-	body, err := json.Marshal(map[string]interface{}{
-		"sessionId":    sessionID,
-		"runId":        "pre-fix",
-		"hypothesisId": hypothesisID,
-		"location":     location,
-		"msg":          "[DEBUG] " + message,
-		"data":         data,
-		"ts":           time.Now().UnixMilli(),
-	})
-	if err != nil {
-		return
-	}
-	req, err := http.NewRequest(http.MethodPost, debugURL, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	_, _ = http.DefaultClient.Do(req)
-}
-
-// #endregion
-
-func preferredRobotLocaleFromSTT() string {
-	if vars.APIConfig.STT.Language == "zh-CN" {
-		return "zh-CN"
-	}
-	return ""
-}
-
-func syncRobotLocaleWithHostDefault(robotObj Robot, rawJdoc string) string {
-	// [CRITICAL FIX]: Forcing the robot's locale to "zh-CN" causes the robot's internal
-	// vic-engine to crash because it lacks the corresponding acoustic hotword models.
-	// This results in the robot being unable to activate or connect.
-	// We MUST NOT sync the locale to "zh-CN" at the robot level.
-	return rawJdoc
-}
-
 func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
 	robotObj, robotIndex, err := getRobot(r.FormValue("serial"))
 	robot := robotObj.Vector
@@ -144,8 +82,7 @@ func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.URL.Path == "/api-sdk/locale":
 		locale := r.FormValue("locale")
-		// Locale updates remain the host-side entry point for robot language settings.
-		setLocaleSetting(robotObj, locale)
+		setSettingSDKstring(robotObj, "locale", locale)
 		fmt.Fprintf(w, "done")
 		return
 	case r.URL.Path == "/api-sdk/location":
@@ -191,12 +128,12 @@ func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
 				i = i + 1
 				continue
 			}
-			json := syncRobotLocaleWithHostDefault(robotObj, resp.NamedJdocs[0].Doc.JsonDoc)
+			json := resp.NamedJdocs[0].Doc.JsonDoc
 			var ajdoc vars.AJdoc
 			ajdoc.DocVersion = resp.NamedJdocs[0].Doc.DocVersion
 			ajdoc.FmtVersion = resp.NamedJdocs[0].Doc.FmtVersion
-			ajdoc.JsonDoc = json
-			vars.CacheRobotSettingsJdoc(robotObj.ESN, ajdoc)
+			ajdoc.JsonDoc = resp.NamedJdocs[0].Doc.JsonDoc
+			vars.AddJdoc("vic:"+robotObj.ESN, "vic.RobotSettings", ajdoc)
 			logger.Println("Updating vic.RobotSettings (source: sdkapp)")
 			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "application/octet-stream")
@@ -291,14 +228,11 @@ func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "done")
 		return
 	case r.URL.Path == "/api-sdk/button_hey_vector":
-		// Keep the legacy endpoint for compatibility. It still only maps the
-		// robot's existing button_wakeword enum and does not define a spoken
-		// wakeword string on its own.
-		setButtonWakewordSetting(robotObj, "0")
+		setSettingSDKintbool(robotObj, "button_wakeword", "0")
 		fmt.Fprintf(w, "done")
 		return
 	case r.URL.Path == "/api-sdk/button_alexa":
-		setButtonWakewordSetting(robotObj, "1")
+		setSettingSDKintbool(robotObj, "button_wakeword", "1")
 		fmt.Fprintf(w, "done")
 		return
 	case r.URL.Path == "/api-sdk/assume_behavior_control":
@@ -446,71 +380,34 @@ func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/api-sdk/begin_event_stream":
 		// setup websocket
 		robots[robotIndex].EventsStreaming = true
-		// #region debug-point D:event-stream-start
-		debugReportSDKEvent("D", "chipper/pkg/wirepod/sdkapp/server.go:466", "starting sdk event stream", map[string]interface{}{
-			"serial": robotObj.ESN,
-			"target": robotObj.Target,
-		})
-		// #endregion
 		go func() {
 			client, err := robot.Conn.EventStream(
 				ctx,
 				&vectorpb.EventRequest{
 					ListType: &vectorpb.EventRequest_WhiteList{
 						WhiteList: &vectorpb.FilterList{
-							List: []string{"stimulation_info", "wake_word"},
+							List: []string{"stimulation_info"},
 						},
 					},
 					ConnectionId: "wirepod",
 				},
 			)
 			if err != nil {
-				// #region debug-point D:event-stream-open-error
-				debugReportSDKEvent("D", "chipper/pkg/wirepod/sdkapp/server.go:482", "failed to open sdk event stream", map[string]interface{}{
-					"serial": robotObj.ESN,
-					"error":  err.Error(),
-				})
-				// #endregion
 				fmt.Fprint(w, err.Error())
 			}
 			for {
 				if robots[robotIndex].EventsStreaming {
 					resp, err := client.Recv()
 					if err != nil {
-						// #region debug-point D:event-stream-recv-error
-						debugReportSDKEvent("D", "chipper/pkg/wirepod/sdkapp/server.go:493", "sdk event stream recv error", map[string]interface{}{
-							"serial": robotObj.ESN,
-							"error":  err.Error(),
-						})
-						// #endregion
 						fmt.Fprint(w, err.Error())
 						robots[robotIndex].EventsStreaming = false
 						return
 					}
-					switch resp.Event.EventType.(type) {
-					case *vectorpb.Event_StimulationInfo:
-						stimInfo := resp.Event.GetStimulationInfo()
-						stimInfoString := fmt.Sprint(stimInfo)
-						if strings.Contains(stimInfoString, "velocity") {
-							// velocity in the string means there is a value
-							robots[robotIndex].StimState = stimInfo.Value
-						}
-					case *vectorpb.Event_WakeWord:
-						wakeWord := resp.Event.GetWakeWord()
-						eventPhase := "unknown"
-						if wakeWord.GetWakeWordBegin() != nil {
-							eventPhase = "begin"
-						} else if wakeWord.GetWakeWordEnd() != nil {
-							eventPhase = "end"
-						}
-						// #region debug-point A:wakeword-event
-						debugReportSDKEvent("A", "chipper/pkg/wirepod/sdkapp/server.go:513", "received sdk wake_word event", map[string]interface{}{
-							"serial":      robotObj.ESN,
-							"phase":       eventPhase,
-							"intentHeard": wakeWord.GetWakeWordEnd().GetIntentHeard(),
-							"intentJson":  wakeWord.GetWakeWordEnd().GetIntentJson(),
-						})
-						// #endregion
+					stimInfo := resp.Event.GetStimulationInfo()
+					stimInfoString := fmt.Sprint(stimInfo)
+					if strings.Contains(stimInfoString, "velocity") {
+						// velocity in the string means there is a value
+						robots[robotIndex].StimState = stimInfo.Value
 					}
 				} else {
 					return
@@ -622,30 +519,6 @@ func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/api-sdk/disconnect":
 		removeRobot(robotObj.ESN, "server")
 		fmt.Fprint(w, "done")
-		return
-	case r.URL.Path == "/api-sdk/trigger_wake_word":
-		// This remains a compatibility endpoint: it simulates a button press on
-		// the robot and is not evidence that the spoken wakeword text changed.
-		robotIP := strings.Split(robotObj.Target, ":")[0]
-		consoleURL := fmt.Sprintf("http://%s:8889/consolevarset?key=FakeButtonPressType&value=singlePressDetected", robotIP)
-
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
-
-		resp, err := client.Get(consoleURL)
-		if err != nil {
-			http.Error(w, "Failed to trigger wake word: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			http.Error(w, "Consolevars returned error", resp.StatusCode)
-			return
-		}
-
-		fmt.Fprint(w, "success")
 		return
 	}
 }
