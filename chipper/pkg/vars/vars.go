@@ -365,6 +365,12 @@ func AddJdoc(thing string, name string, jdoc AJdoc) uint64 {
 	return latestVersion
 }
 
+// CacheRobotSettingsJdoc keeps the RobotSettings cache on the host side
+// consistent, no matter whether it came from sdkapp or the periodic jdocs pinger.
+func CacheRobotSettingsJdoc(serial string, jdoc AJdoc) uint64 {
+	return AddJdoc("vic:"+serial, "vic.RobotSettings", jdoc)
+}
+
 func ReadSessionCerts() {
 	logger.Println("Reading session certs for robot IDs")
 	var rinfo RecurringInfoStore

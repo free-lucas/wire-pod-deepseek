@@ -391,7 +391,8 @@ function updateKGAPI() {
 }
 
 function setSTTLanguage() {
-  const data = { language: getE("languageSelection").value };
+  const selectedLanguage = getE("languageSelection").value;
+  const data = { language: selectedLanguage };
 
   displayMessage("languageStatus", "Setting...");
 
@@ -405,7 +406,10 @@ function setSTTLanguage() {
     .then((response) => response.text())
     .then((response) => {
       if (response.includes("downloading")) {
-        displayMessage("languageStatus", "Downloading model...");
+        const waitingMessage = selectedLanguage === "zh-CN"
+          ? "Downloading zh-CN model..."
+          : "Downloading model...";
+        displayMessage("languageStatus", waitingMessage);
         updateSTTLanguageDownload();
       } else {
         displayMessage("languageStatus", response);
@@ -578,11 +582,14 @@ function showLanguage() {
     .then((response) => response.json())
     .then((parsed) => {
       if (parsed.provider !== "vosk" && parsed.provider !== "whisper.cpp") {
-        displayError("languageStatus", `To set the STT language, the provider must be Vosk or Whisper. The current one is '${parsed.sttProvider}'.`);
+        displayError("languageStatus", `To set the STT language, the provider must be Vosk or Whisper.cpp. The current one is '${parsed.provider}'.`);
         getE("languageSelectionDiv").style.display = "none";
       } else {
         getE("languageSelectionDiv").style.display = "block";
         getE("languageSelection").value = parsed.language;
+        if (parsed.language === "zh-CN") {
+          displayMessage("languageStatus", "Current STT language: zh-CN");
+        }
       }
     });
 }

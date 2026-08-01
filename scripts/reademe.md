@@ -1,0 +1,1 @@
+./scripts/deploy_to_escapepod.sh --host pi@192.168.1.38

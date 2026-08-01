@@ -231,6 +231,7 @@ func handleSetSTTInfo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !isDownloadedLanguage(request.Language, vars.DownloadedVoskModels) {
+			logger.Println("STT language", request.Language, "is not downloaded yet, starting model download")
 			go localization.DownloadVoskModel(request.Language)
 			fmt.Fprint(w, "downloading language model...")
 			return
@@ -241,12 +242,13 @@ func handleSetSTTInfo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		http.Error(w, "service must be vosk or whisper", http.StatusBadRequest)
+		http.Error(w, "service must be vosk or whisper.cpp", http.StatusBadRequest)
 		return
 	}
 	vars.APIConfig.STT.Language = request.Language
 	vars.APIConfig.PastInitialSetup = true
 	vars.WriteConfigToDisk()
+	logger.Println("Persisted STT language to config:", request.Language)
 	processreqs.ReloadVosk()
 	logger.Println("Reloaded voice processor successfully")
 	fmt.Fprint(w, "Language switched successfully.")

@@ -76,6 +76,10 @@ grant@lh %
 grant@lh % ssh root@<VECTOR_IP> /sbin/reboot            
 ```
 
-And test after the reboot by saying "Hey Vector... Question... What is Area 51?" and
-"Hey Vector... Question... What is DogeCoin?"
+And test after the reboot by saying "小智，小智... Question... What is Area 51?" and
+"小智，小智... Question... What is DogeCoin?"
 
+## Wakeword Note
+
+This repository can update host-side UI, locale handling, and compatibility behavior around the default wakeword experience.
+It does not, by itself, prove that the robot firmware has switched the spoken hotword text from "Hey Vector" to another phrase.

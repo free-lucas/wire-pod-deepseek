@@ -79,13 +79,13 @@ func pingJdocs(target string) {
 		return
 	}
 	logger.Println("Successfully got jdocs from " + serial)
-	// write to file
+	// Keep the same cache entry updated that sdkapp/get_sdk_settings uses.
 	var jdoc vars.AJdoc
 	jdoc.DocVersion = resp.NamedJdocs[0].Doc.DocVersion
 	jdoc.FmtVersion = resp.NamedJdocs[0].Doc.FmtVersion
 	jdoc.ClientMetadata = resp.NamedJdocs[0].Doc.ClientMetadata
 	jdoc.JsonDoc = resp.NamedJdocs[0].Doc.JsonDoc
-	vars.AddJdoc("vic:"+serial, "vic.RobotSettings", jdoc)
+	vars.CacheRobotSettingsJdoc(serial, jdoc)
 }
 
 func InitJdocsPinger() {
