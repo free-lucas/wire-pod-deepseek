@@ -510,19 +510,27 @@ func DoGetImage(msgs []openai.ChatCompletionMessage, param string, robot *vector
 	// encode to base64
 	reqBase64 := base64.StdEncoding.EncodeToString(resp.Data)
 
-	// add image to messages
-	msgs = append(msgs, openai.ChatCompletionMessage{
-		Role: openai.ChatMessageRoleUser,
-		MultiContent: []openai.ChatMessagePart{
-			{
-				Type: openai.ChatMessagePartTypeImageURL,
-				ImageURL: &openai.ChatMessageImageURL{
-					URL:    fmt.Sprintf("data:image/jpeg;base64,%s", reqBase64),
-					Detail: openai.ImageURLDetailLow,
+	// add image to messages (only if provider supports vision)
+	if knowledgeSupportsVision() {
+		msgs = append(msgs, openai.ChatCompletionMessage{
+			Role: openai.ChatMessageRoleUser,
+			MultiContent: []openai.ChatMessagePart{
+				{
+					Type: openai.ChatMessagePartTypeImageURL,
+					ImageURL: &openai.ChatMessageImageURL{
+						URL:    fmt.Sprintf("data:image/jpeg;base64,%s", reqBase64),
+						Detail: openai.ImageURLDetailLow,
+					},
 				},
 			},
-		},
-	})
+		})
+	} else {
+		logger.Println("Current knowledge provider does not support vision, skipping image")
+		msgs = append(msgs, openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleUser,
+			Content: "（系统提示：当前模型不支持图像识别，无法分析照片，请根据之前的对话继续回答。）",
+		})
+	}
 
 	// recreate openai
 	var fullRespText string

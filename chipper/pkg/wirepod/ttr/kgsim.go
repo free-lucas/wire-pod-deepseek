@@ -33,6 +33,22 @@ func logKnowledgeError(message string) error {
 	return errors.New(message)
 }
 
+// knowledgeSupportsVision returns true if the current knowledge provider supports
+// vision/image input (image_url message type).
+func knowledgeSupportsVision() bool {
+	switch vars.APIConfig.Knowledge.Provider {
+	case vars.KnowledgeProviderDeepSeek:
+		// DeepSeek models (deepseek-v4-flash, deepseek-v4-pro) do not support image_url
+		return false
+	case vars.KnowledgeProviderTogether:
+		// Together API may or may not support vision depending on model; default to false
+		return false
+	default:
+		// OpenAI and custom providers (Ollama with vision models, etc.) may support it
+		return true
+	}
+}
+
 func knowledgeModel(gpt3tryagain bool) (string, error) {
 	if gpt3tryagain {
 		return openai.GPT3Dot5Turbo, nil

@@ -91,45 +91,95 @@ if [[ -n "${RSYNC_SSH_OPTS}" ]]; then
   SSH_CMD+=("${SSH_EXTRA_OPTS[@]}")
 fi
 
-RESTART_SSH_CMD=("${SSH_CMD[@]}" -tt)
+# Do NOT use -tt (pseudo-terminal). It turns the HEREDOC into interactive
+# line-by-line paste, which breaks command execution and hides errors.
+RESTART_SSH_CMD=("${SSH_CMD[@]}")
 
 echo "==> Deploy target: ${REMOTE_HOST}:${REMOTE_DIR}"
 
+# ---------------------------------------------------------------------------
+# Step 1: Optionally cross-compile chipper for ARM Linux locally.
+# This avoids the VERY slow Go compilation on Raspberry Pi, and more
+# importantly prevents systemd start timeout (systemd kills long compiles).
+# ---------------------------------------------------------------------------
+LOCAL_CHIPPER_SRC="${REPO_ROOT}/chipper"
+LOCAL_CHIPPER_BIN="${LOCAL_CHIPPER_SRC}/chipper"
+CROSS_BUILT=0
+
+if [[ "${SKIP_SYNC}" -eq 0 ]] && command -v go &>/dev/null && [[ -f "${LOCAL_CHIPPER_SRC}/go.mod" ]]; then
+  echo "==> Attempting local cross-compile for ARM Linux..."
+  # Load STT_SERVICE and friends from source.sh if available
+  if [[ -f "${LOCAL_CHIPPER_SRC}/source.sh" ]]; then
+    # shellcheck disable=SC1090
+    source "${LOCAL_CHIPPER_SRC}/source.sh"
+  fi
+  export GOTAGS="nolibopusfile"
+  if [[ "${USE_INBUILT_BLE:-}" == "true" ]]; then
+    GOTAGS="${GOTAGS},inbuiltble"
+  fi
+  COMMIT_HASH="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+  export GOLDFLAGS="-X 'github.com/kercre123/wire-pod/chipper/pkg/vars.CommitSHA=${COMMIT_HASH}'"
+
+  case "${STT_SERVICE:-vosk}" in
+    vosk)
+      echo "STT_SERVICE=vosk, building with CGO (may fail without Pi libvosk)..."
+      export CGO_ENABLED=1
+      if (cd "${LOCAL_CHIPPER_SRC}" && GOOS=linux GOARCH=arm GOARM=7 \
+           go build -tags "${GOTAGS}" -ldflags="${GOLDFLAGS}" \
+           -o chipper cmd/vosk/main.go 2>&1); then
+        echo "Cross-compile OK: ${LOCAL_CHIPPER_BIN}"
+        CROSS_BUILT=1
+      else
+        echo "Cross-compile failed (expected for CGO deps), will build on remote."
+        rm -f "${LOCAL_CHIPPER_BIN}"
+      fi
+      ;;
+    *)
+      export CGO_ENABLED=0
+      if (cd "${LOCAL_CHIPPER_SRC}" && GOOS=linux GOARCH=arm GOARM=7 \
+           go build -tags "${GOTAGS}" -ldflags="${GOLDFLAGS}" \
+           -o chipper cmd/vosk/main.go 2>&1); then
+        echo "Cross-compile OK: ${LOCAL_CHIPPER_BIN}"
+        CROSS_BUILT=1
+      else
+        echo "Cross-compile failed, will build on remote."
+        rm -f "${LOCAL_CHIPPER_BIN}"
+      fi
+      ;;
+  esac
+fi
+
+# ---------------------------------------------------------------------------
+# Step 2: rsync source (and optionally the cross-compiled binary) to remote
+# ---------------------------------------------------------------------------
 if [[ "${SKIP_SYNC}" -eq 0 ]]; then
-  echo "==> Syncing local repository to remote host"
+  echo "==> Syncing to ${REMOTE_HOST}:${REMOTE_DIR} ..."
 
   RSYNC_ARGS=(
     -avz
     --progress
-    --exclude
-    ".git"
-    --exclude
-    ".DS_Store"
-    --exclude
-    ".codegraph"
-    --exclude
-    ".trae"
-    --exclude
-    ".specify"
-    --exclude
-    ".vscode"
-    --exclude
-    "scripts/.DS_Store"
-    --exclude
-    "chipper/source.sh"
-    --exclude
-    "chipper/apiConfig.json"
-    --exclude
-    "chipper/jdocs/"
-    --exclude
-    "chipper/session-certs/"
-    --exclude
-    "certs/server_config.json"
-    --exclude
-    "chipper/chipper"
-    -e
-    "${SSH_CMD[*]}"
+    --exclude ".git"
+    --exclude ".DS_Store"
+    --exclude ".codegraph"
+    --exclude ".trae"
+    --exclude ".specify"
+    --exclude ".vscode"
+    --exclude "scripts/.DS_Store"
+    --exclude "chipper/source.sh"
+    --exclude "chipper/apiConfig.json"
+    --exclude "chipper/jdocs/"
+    --exclude "chipper/session-certs/"
+    --exclude "certs/server_config.json"
+    -e "${SSH_CMD[*]}"
   )
+
+  # Include cross-compiled binary if we built one; otherwise exclude old binary
+  if [[ "${CROSS_BUILT}" -eq 1 ]]; then
+    RSYNC_ARGS+=(--include "chipper/chipper")
+    echo "==> Including pre-built chipper binary in upload"
+  else
+    RSYNC_ARGS+=(--exclude "chipper/chipper")
+  fi
 
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     RSYNC_ARGS+=(--dry-run)
@@ -148,35 +198,30 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
   exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# Step 3: Remote restart — stop old processes, build if needed, start fresh
+# ---------------------------------------------------------------------------
 echo "==> Restarting remote application"
 
 "${RESTART_SSH_CMD[@]}" "${REMOTE_HOST}" \
-  "env REMOTE_DIR='${REMOTE_DIR}' REMOTE_LOG='${REMOTE_LOG}' bash -s" <<'EOF'
+  "env REMOTE_DIR='${REMOTE_DIR}' REMOTE_LOG='${REMOTE_LOG}' CROSS_BUILT='${CROSS_BUILT}' bash -s" <<'RESTART_EOF'
 set -euo pipefail
 
 expand_remote_path() {
   local path="$1"
-
   if [[ -z "${path}" || "${path}" == "~" ]]; then
-    printf '%s\n' "${HOME}"
-    return
+    printf '%s\n' "${HOME}"; return
   fi
-
   if [[ "${path}" == "~/"* ]]; then
-    printf '%s/%s\n' "${HOME}" "${path#~/}"
-    return
+    printf '%s/%s\n' "${HOME}" "${path#~/}"; return
   fi
-
   if [[ "${path}" == "${HOME}/~/"* ]]; then
     printf '%s/%s\n' "${HOME}" "${path#"${HOME}/~/"}"
     return
   fi
-
   if [[ "${path}" == /* ]]; then
-    printf '%s\n' "${path}"
-    return
+    printf '%s\n' "${path}"; return
   fi
-
   printf '%s/%s\n' "${HOME}" "${path}"
 }
 
@@ -184,39 +229,92 @@ REMOTE_DIR="$(expand_remote_path "${REMOTE_DIR}")"
 REMOTE_LOG="$(expand_remote_path "${REMOTE_LOG}")"
 
 if [[ ! -d "${REMOTE_DIR}" ]]; then
-  echo "Remote project directory does not exist: ${REMOTE_DIR}" >&2
+  echo "ERROR: Remote directory not found: ${REMOTE_DIR}" >&2
   exit 1
 fi
 
 cd "${REMOTE_DIR}"
-
 echo "Remote directory: ${REMOTE_DIR}"
 
-if sudo systemctl list-unit-files 2>/dev/null | grep -q 'wire-pod\.service'; then
-  echo "Detected wire-pod.service, stopping rogue processes and restarting with systemd"
-  if pgrep -af '/chipper/start\.sh|/chipper($| )|cmd/vosk/main\.go|cmd/experimental/' >/dev/null 2>&1; then
-    sudo pkill -f '/chipper/start\.sh|/chipper($| )|cmd/vosk/main\.go|cmd/experimental/' || true
-    sleep 2
-  fi
-  sudo systemctl restart wire-pod
-  sudo systemctl --no-pager --full status wire-pod || true
-  exit 0
+# Helper: check if wire-pod.service exists and is known to systemd.
+# Uses 'systemctl cat' (checks unit file) + 'systemctl status' as fallback.
+has_wirepod_service() {
+  sudo systemctl cat wire-pod.service >/dev/null 2>&1 && return 0
+  sudo systemctl status wire-pod.service >/dev/null 2>&1 && return 0
+  return 1
+}
+
+# ---- Stop everything first ----
+if has_wirepod_service; then
+  echo "Stopping wire-pod.service..."
+  sudo systemctl stop wire-pod 2>/dev/null || true
 fi
 
-echo "wire-pod.service not found, falling back to start.sh"
-
-if pgrep -af '/chipper/start\.sh|/chipper($| )|cmd/vosk/main\.go|cmd/experimental/' >/dev/null 2>&1; then
-  echo "Stopping existing wire-pod related processes"
-  sudo pkill -f '/chipper/start\.sh|/chipper($| )|cmd/vosk/main\.go|cmd/experimental/' || true
+if pgrep -af '/chipper/start\.sh|/chipper($|[[:space:]])|cmd/vosk/main\.go|cmd/experimental/' >/dev/null 2>&1; then
+  echo "Killing lingering chipper processes..."
+  sudo pkill -f '/chipper/start\.sh|/chipper($|[[:space:]])|cmd/vosk/main\.go|cmd/experimental/' || true
   sleep 2
 fi
 
-echo "Starting wire-pod with nohup, log: ${REMOTE_LOG}"
-nohup sudo ./chipper/start.sh > "${REMOTE_LOG}" 2>&1 < /dev/null &
-sleep 3
+# ---- Build if needed ----
+CHIPPER_BIN="${REMOTE_DIR}/chipper/chipper"
+if [[ "${CROSS_BUILT}" == "1" ]]; then
+  echo "Using pre-built binary: ${CHIPPER_BIN}"
+  sudo chmod +x "${CHIPPER_BIN}"
+else
+  echo "Building chipper on remote (this may take 2-5 minutes on Pi)..."
+  sudo rm -f "${CHIPPER_BIN}"
+  cd "${REMOTE_DIR}/chipper"
+  if [[ -f source.sh ]]; then
+    # shellcheck disable=SC1091
+    source source.sh
+  fi
+  export GOTAGS="nolibopusfile"
+  if [[ "${USE_INBUILT_BLE:-}" == "true" ]]; then
+    GOTAGS="${GOTAGS},inbuiltble"
+  fi
+  COMMIT_HASH="$(git -C "${REMOTE_DIR}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+  export GOLDFLAGS="-X 'github.com/kercre123/wire-pod/chipper/pkg/vars.CommitSHA=${COMMIT_HASH}'"
+  if [[ "${STT_SERVICE:-}" == "vosk" ]]; then
+    export CGO_ENABLED=1
+    export CGO_CFLAGS="-I/root/.vosk/libvosk -I${HOME}/.vosk/libvosk"
+    export CGO_LDFLAGS="-L/root/.vosk/libvosk -L${HOME}/.vosk/libvosk -lvosk -ldl -lpthread"
+    export LD_LIBRARY_PATH="/root/.vosk/libvosk:${HOME}/.vosk/libvosk:${LD_LIBRARY_PATH:-}"
+  fi
+  if ! sudo -E /usr/local/go/bin/go build -tags "${GOTAGS}" -ldflags="${GOLDFLAGS}" -o chipper cmd/vosk/main.go; then
+    echo "ERROR: Build failed on remote!" >&2
+    exit 1
+  fi
+  echo "Build OK: ${CHIPPER_BIN}"
+  cd "${REMOTE_DIR}"
+fi
 
-echo "Recent log output:"
-tail -n 40 "${REMOTE_LOG}" || true
-EOF
+# ---- Start with systemd (preferred) or nohup fallback ----
+if has_wirepod_service; then
+  echo "Starting wire-pod.service..."
+  if ! sudo systemctl start wire-pod; then
+    echo "ERROR: systemctl start failed!" >&2
+    sudo systemctl --no-pager --full status wire-pod || true
+    exit 1
+  fi
+  sleep 2
+  echo "--- Service status ---"
+  sudo systemctl --no-pager --full status wire-pod || true
+  echo ""
+  echo "--- Recent logs ---"
+  sudo journalctl -u wire-pod.service --no-pager -n 30 || true
+else
+  echo "wire-pod.service not found, starting with nohup (log: ${REMOTE_LOG})"
+  nohup sudo ./chipper/start.sh > "${REMOTE_LOG}" 2>&1 < /dev/null &
+  sleep 4
+  echo "--- Recent log output ---"
+  tail -n 40 "${REMOTE_LOG}" || true
+fi
+RESTART_EOF
 
 echo "==> Deploy finished"
+
+# Clean up local cross-compiled binary
+if [[ "${CROSS_BUILT}" -eq 1 ]]; then
+  rm -f "${LOCAL_CHIPPER_BIN}"
+fi
