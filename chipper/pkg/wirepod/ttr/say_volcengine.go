@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -32,14 +33,69 @@ type volcengineReqParams struct {
 }
 
 type volcengineAudioParams struct {
-	Format     string `json:"format"`
-	SampleRate int    `json:"sample_rate"`
+	Format       string `json:"format"`
+	SampleRate   int    `json:"sample_rate"`
+	LoudnessRate int    `json:"loudness_rate"`
 }
 
 type volcengineTTSResp struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    string `json:"data"`
+}
+
+// getRobotMasterVolume reads the robot's master_volume (0-5) from jdocs.
+// Returns the raw value, or 3 (MEDIUM) on any error.
+func getRobotMasterVolume(robot *vector.Vector) int {
+	esn := robot.Cfg.SerialNo
+	if esn == "" {
+		logger.Println("getRobotMasterVolume: ESN is empty, defaulting to 3 (MEDIUM)")
+		return 3
+	}
+
+	jdoc, ok := vars.GetJdoc("vic:"+esn, "vic.RobotSettings")
+	if !ok {
+		logger.Println("getRobotMasterVolume: jdoc not cached for " + esn + ", defaulting to 3 (MEDIUM)")
+		return 3
+	}
+
+	var settings struct {
+		MasterVolume int `json:"master_volume"`
+	}
+	if err := json.Unmarshal([]byte(jdoc.JsonDoc), &settings); err != nil {
+		logger.Println("getRobotMasterVolume: failed to parse jdoc: " + err.Error() + ", defaulting to 3 (MEDIUM)")
+		return 3
+	}
+
+	logger.Println("getRobotMasterVolume: master_volume=" + fmt.Sprint(settings.MasterVolume) + " for " + esn)
+
+	if settings.MasterVolume < 0 || settings.MasterVolume > 5 {
+		logger.Println("getRobotMasterVolume: unexpected master_volume=" + fmt.Sprint(settings.MasterVolume) + ", defaulting to 3 (MEDIUM)")
+		return 3
+	}
+	return settings.MasterVolume
+}
+
+// getLoudnessRate maps the robot's master_volume to the Volcengine TTS
+// loudness_rate parameter (-50 to 100), where -50=0.5x, 0=1x, 100=2x.
+func getLoudnessRate(robot *vector.Vector) int {
+	mv := getRobotMasterVolume(robot)
+	switch mv {
+	case 0:
+		return -50 // muted, AudioVolume=0 handles actual silence
+	case 1:
+		return -20 // ~0.8x
+	case 2:
+		return 0 // normal
+	case 3:
+		return 35 // ~1.35x
+	case 4:
+		return 70 // ~1.7x
+	case 5:
+		return 100 // 2x
+	default:
+		return 0
+	}
 }
 
 func DoSayText_Volcengine(robot *vector.Vector, input string) error {
@@ -59,8 +115,9 @@ func DoSayText_Volcengine(robot *vector.Vector, input string) error {
 			Text:    input,
 			Speaker: voice,
 			AudioParams: volcengineAudioParams{
-				Format:     "pcm",
-				SampleRate: 16000,
+				Format:       "pcm",
+				SampleRate:   16000,
+				LoudnessRate: getLoudnessRate(robot),
 			},
 		},
 	}
@@ -81,6 +138,10 @@ func DoSayText_Volcengine(robot *vector.Vector, input string) error {
 	req.Header.Set("X-Api-Key", apiKey)
 	req.Header.Set("X-Api-Resource-Id", vars.VolcengineResourceID)
 	req.Header.Set("X-Api-Request-Id", requestID)
+	req.Header.Set("Connection", "keep-alive")
+
+	logger.Println("Volcengine TTS request URL: " + vars.VolcengineTTSURL)
+	logger.Println("Volcengine TTS request body: " + string(jsonData))
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -89,6 +150,8 @@ func DoSayText_Volcengine(robot *vector.Vector, input string) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	logger.Println("Volcengine TTS response status: " + resp.Status)
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -127,6 +190,15 @@ func DoSayText_Volcengine(robot *vector.Vector, input string) error {
 		return nil
 	}
 
+	// AudioVolume is capped at 100 (Vector firmware limit).
+	// Volume differences are handled by loudness_rate on the API side.
+	// Only mute (master_volume=0) sets AudioVolume to 0.
+	masterVol := getRobotMasterVolume(robot)
+	var audioVolume uint32 = 100
+	if masterVol == 0 {
+		audioVolume = 0
+	}
+
 	vclient, err := robot.Conn.ExternalAudioStreamPlayback(context.Background())
 	if err != nil {
 		return err
@@ -135,7 +207,7 @@ func DoSayText_Volcengine(robot *vector.Vector, input string) error {
 		AudioRequestType: &vectorpb.ExternalAudioStreamRequest_AudioStreamPrepare{
 			AudioStreamPrepare: &vectorpb.ExternalAudioStreamPrepare{
 				AudioFrameRate: 16000,
-				AudioVolume:    100,
+				AudioVolume:    audioVolume,
 			},
 		},
 	})
