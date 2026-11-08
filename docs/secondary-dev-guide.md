@@ -1,250 +1,215 @@
-# 二次开发指南
+# 二次开发指南（v2 — 基于源码核对版）
 
-这一份尽量站在“Go 新手”的角度讲，核心目标不是一次性看懂全部代码，而是知道：
+> 本文档与当前源码（commit `5b35c8ee`）逐层核对，重点标记**真正需要改代码的位置**。
 
-- 我想改一个功能，先去哪里
-- 我改完之后，可能会影响什么
-- 哪些地方先别乱动
+---
 
 ## 1. 推荐的二开路径
 
-按难度从低到高，建议这样开始：
+按难度从低到高：
 
-1. 改配置页和接口
-2. 改自定义意图
-3. 改内置意图匹配逻辑
-4. 改知识问答/LLM
-5. 新增 STT
-6. 改 `vector-cloud`
+1. **改配置页和接口** → `chipper/pkg/wirepod/config-ws/webserver.go` + `webroot/`
+2. **改自定义意图** → `customIntents.json` 或 `pkg/wirepod/ttr/matchIntentSend.go`
+3. **改内置意图匹配逻辑** → `pkg/wirepod/ttr/matchIntentSend.go` 的 `ProcessTextAll()`
+4. **改知识问答 / LLM** → `pkg/wirepod/ttr/kgsim.go` + `pkg/vars/config.go`
+5. **接入新 STT** → `pkg/wirepod/stt/` + `cmd/` + `start.sh`
+6. **改 `vector-cloud`** → 仅机器人侧协议适配需要时再碰
 
-## 2. 常见需求，对应改哪里
+---
 
-| 需求 | 优先改动位置 |
-| --- | --- |
-| 增加一个网页设置项 | `chipper/webroot/` + `pkg/wirepod/config-ws/webserver.go` |
-| 增加一个机器人控制按钮 | `chipper/webroot/sdkapp/` + `pkg/wirepod/sdkapp/` |
-| 新增一个“说某句话就触发”的功能 | `customIntents.json` 或 `pkg/wirepod/ttr/matchIntentSend.go` |
-| 修改现有意图匹配方式 | `pkg/wirepod/ttr/` |
-| 接入新的 LLM 配置 | `pkg/wirepod/ttr/kgsim.go` + `pkg/vars/config.go` |
-| 接入新的 STT 引擎 | `pkg/wirepod/stt/` + `cmd/` + `start.sh` |
-| 改机器人安装/配网/证书逻辑 | `pkg/wirepod/setup/` |
-| 改机器人侧协议兼容 | `vector-cloud/` |
+## 2. 常见需求 → 精确落点
 
-## 3. 最适合新手下手的 4 个方向
+| 需求 | 优先改动位置 | 关键函数 / 行号 |
+| --- | --- | --- |
+| 增加一个网页设置项 | `config-ws/webserver.go` + `webroot/setup.html` | `set_weather_api` / `set_kg_api` 已有模式可抄 |
+| 增加一个机器人控制按钮 | `sdkapp/server.go` + `webroot/sdkapp/settings.html` | `/api-sdk/locale` / `/api-sdk/get_sdk_settings` |
+| 新增"说某句话就触发"功能 | `customIntents.json` 或 `ttr/matchIntentSend.go` | `customIntentHandler()` @ line 100 |
+| 修改现有意图匹配方式 | `ttr/matchIntentSend.go` | `ProcessTextAll()` @ line 241 |
+| 接入新的 LLM 提供商 | `ttr/kgsim.go` + `vars/config.go` | `StreamingKGSim()` @ line 189；Provider switch @ line 242 |
+| 接入新的 STT 引擎 | `stt/` + `cmd/` + `start.sh` | `sttHandler func(sr.SpeechRequest) (string, error)` |
+| 改机器人安装 / 配网 / 证书 | `setup/certs.go` / `setup/ssh.go` / `setup/ble.go` | `CreateCertCombo()` / `CreateServerConfig()` |
+| 改机器人侧协议兼容 | `vector-cloud/gateway/` / `vector-cloud/internal/voice/` | `gateway/main.go:226` ExternalInterface 注册 |
+
+---
+
+## 3. 最容易下手的 4 个方向
 
 ### 方向 A：先改网页配置
 
-为什么适合新手：
+为什么适合新手：看到效果快、风险小、不接触音频流。
 
-- 容易看到结果
-- 风险相对小
-- 不需要先深入 gRPC 和音频流
-
-典型改法：
-
-1. 在 `chipper/webroot/` 加页面字段或按钮
-2. 在 `pkg/wirepod/config-ws/webserver.go` 增加 `/api/...` 接口
-3. 把配置写入 `vars.APIConfig`
+完整步骤：
+1. 在 `chipper/webroot/` 加 HTML 字段
+2. 在 `pkg/wirepod/config-ws/webserver.go` 加 `POST /api/xxx` handler
+3. 读取请求体写入 `vars.APIConfig.XxxField`
 4. 调用 `vars.WriteConfigToDisk()`
+5. （可选）若涉及 STT 语言变化，调用 `preqs.ReloadVosk()`
 
 ### 方向 B：先改自定义意图
 
-适合做：
-
-- 语音触发外部脚本
-- 语音执行固定命令
-- 语音调用 Lua 脚本
-
-重点看：
-
-- `vars.CustomIntent` 结构
-- `pkg/wirepod/config-ws/webserver.go`
-- `pkg/wirepod/ttr/matchIntentSend.go` 里的 `customIntentHandler`
-
-### 方向 C：再改内置 intent 匹配
-
-适合做：
-
-- 调整匹配优先级
-- 减少误匹配
-- 新增内置意图规则
+自定义意图支持三种执行模式：
+- **纯 intent 返回**：直接返回一个 intent name，走正常 intent 处理链
+- **系统意图（IsSystemIntent=true）**：返回 JSON `{"status":"ok","returnIntent":"intent_xxx"}`，解析后继续走 IntentPass
+- **Lua 脚本**：`LuaScript` 字段指向 `.lua` 文件，通过 `scripting.RunLuaScript()` 异步执行
+- **外部命令**：`Exec` + `ExecArgs`，支持 `!botSerial`、`!speechText`、`!intentName`、`!locale` 四个模板变量
 
 重点看：
+- `vars.CustomIntents` 结构（`vars/vars.go`）
+- `matchIntentSend.go:100` 的 `customIntentHandler()`
 
-- `chipper/intent-data/*.json`
-- `pkg/wirepod/ttr/matchIntentSend.go`
-- `pkg/wirepod/ttr/intentparam.go`
+### 方向 C：改内置 intent 匹配
 
-### 方向 D：最后碰 LLM
+优先级规则（`matchIntentSend.go:241` `ProcessTextAll`）：
+1. Go 插件（`pluginFunctionHandler`）
+2. 自定义意图（`customIntentHandler`）
+3. 精确匹配 `intent-data/*.json`（== 全等）
+4. 模糊匹配（Contains，`RequireExactMatch=false`）
 
-适合做：
+修改意图词库直接在 `chipper/intent-data/<lang>.json` 编辑，无需重新编译。
 
-- 自定义提示词
-- 换模型
-- 改上下文记忆策略
-- 改返回文本清洗逻辑
+### 方向 D：接新 LLM
 
-重点看：
+当前支持的 Provider（`kgsim.go:242`）：
+- `openai` — 直接调 OpenAI API
+- `together` — 调 Together AI（默认模型 Llama-3-70b）
+- `custom` — 任意 OpenAI-compatible endpoint（填 Endpoint）
+- `houndify` — Houndify 语音搜索（在 `preqs/knowledgegraph.go` 单独处理）
 
-- `pkg/wirepod/ttr/kgsim.go`
-- `pkg/vars/config.go`
+新增 Provider 需要在 `kgsim.go` 的 Provider switch 中加分支，并在 `vars/config.go` 确认结构体覆盖该值。
 
-## 4. 你会最常改到的文件类型
+---
 
-### 1) 入口文件
+## 4. 最常改到的文件类型
 
-- `chipper/cmd/*/main.go`
+### 入口文件
+- `chipper/cmd/*/main.go` — 一般不改，除非换 STT 入口
 
-一般不常改，除非你要新增新的 STT 入口。
+### 配置结构体
+- `chipper/pkg/vars/config.go` — 新增任何配置项都从这里开始
+- `chipper/pkg/vars/vars.go` — 全局状态变量、路径定义、BotInfo 加载
 
-### 2) 配置结构体
+### 请求处理
+- `chipper/pkg/wirepod/preqs/intent.go` — `ProcessIntent()`
+- `chipper/pkg/wirepod/preqs/intent_graph.go` — `ProcessIntentGraph()`
+- `chipper/pkg/wirepod/preqs/knowledgegraph.go` — `ProcessKnowledgeGraph()`
 
-- `chipper/pkg/vars/config.go`
-- `chipper/pkg/vars/vars.go`
+### 核心业务
+- `chipper/pkg/wirepod/ttr/matchIntentSend.go` — 意图匹配总调度（最重要的一的文件之一）
+- `chipper/pkg/wirepod/ttr/kgsim.go` — KG/LLM 调用（646行的核心长函数）
+- `chipper/pkg/wirepod/ttr/weather.go` — 天气查询
 
-新增配置项时，通常会先改这里。
+### 前端静态页
+- `chipper/webroot/setup.html` — 初始设置向导
+- `chipper/webroot/index.html` — 主页面（脸部动画 + 状态）
+- `chipper/webroot/sdkapp/settings.html` — SDK 控制面板
+- `chipper/webroot/js/main.js` — 主页面交互
 
-### 3) 请求处理函数
+---
 
-- `chipper/pkg/wirepod/preqs/*.go`
+## 5. 值得优先读的源代码顺序
 
-适合改“请求怎么分流”。
+### 第 1 轮（建立全局地图，必读）
+```
+chipper/pkg/initwirepod/startserver.go   ← 启动调度中枢
+chipper/pkg/wirepod/preqs/server.go      ← 请求入口构造函数
+chipper/pkg/wirepod/ttr/matchIntentSend.go ← 意图匹配总调度
+chipper/pkg/vars/config.go               ← 配置结构
+chipper/pkg/vars/vars.go                 ← 全局变量和路径
+```
 
-### 4) 核心业务逻辑
+### 第 2 轮（按需读）
+- 想改网页 → `config-ws/webserver.go` + `sdkapp/server.go`
+- 想做问答 → `ttr/kgsim.go`（只看 `StreamingKGSim()` 的 Provider 分支部分即可）
+- 想改安装流程 → `setup/certs.go` + `setup/ssh.go`
+- 想理解向量云通信 → `vector-cloud/internal/voice/process.go:170` hotword 事件循环
 
-- `chipper/pkg/wirepod/ttr/*.go`
-
-适合改“识别后应该怎么响应”。
-
-### 5) 前端静态页
-
-- `chipper/webroot/`
-- `chipper/webroot/sdkapp/`
-
-适合改页面和按钮行为。
-
-## 5. 二开时最值得优先读的顺序
-
-### 第 1 轮，只读这些
-
-1. `pkg/initwirepod/startserver.go`
-2. `pkg/wirepod/preqs/server.go`
-3. `pkg/wirepod/preqs/intent.go`
-4. `pkg/wirepod/ttr/matchIntentSend.go`
-5. `pkg/vars/config.go`
-
-### 第 2 轮，按需求读
-
-- 想改网页：读 `config-ws/`
-- 想控机器人：读 `sdkapp/`
-- 想做问答：读 `kgsim.go`
-- 想做安装接入：读 `setup/`
+---
 
 ## 6. 新手最容易踩的坑
 
-### 1) 以为只有一个服务
+### 坑 1：以为只有一个 HTTP 服务
+实际上有三个并发监听：
+- gRPC/TLS（芯片侧，端口由 `apiConfig.json` 的 `server.port` 决定）
+- 配置页 Web（`vars.WebPort`，默认 `:8080`）
+- SDK 控制页（`:80`）
 
-实际上同时存在：
+它们共享同一个 `http.DefaultServeMux`，路由前缀不同所以不冲突。
 
-- gRPC/TLS 服务
-- 配置页 Web 服务
-- SDK 控制页服务
+### 坑 2：以为所有逻辑都在 `vector-cloud`
+日常二开大部分逻辑在 `chipper/`。`vector-cloud` 只负责机器人侧的协议桥接，改动它的门槛明显更高。
 
-所以你看到 `http.HandleFunc(...)` 很多时，不要惊讶。
+### 坑 3：只改 `intent-data/*.json` 以为就够了
+命中 intent 之后还要经过：参数提取（`ParamChecker`）→ 天气/KG 分支判断 → TTS 输出 → 回包。简单改 intent name 不会改变行为逻辑，要同时理解后续链路。
 
-### 2) 以为所有逻辑都在 `vector-cloud`
+### 坑 4：乱跑 `update.sh`
+这个脚本包含 `git reset --hard origin/main`，会强制覆盖本地所有改动。二开期间不要运行它。
 
-不是。日常二开，大多数逻辑其实在 `chipper/`。
+### 坑 5：一开始就改 `vector-cloud`
+机器人侧涉及 IPC、token 刷新、AudioDone 状态机、Unixgram socket 等底层机制，建议 chipper 完全熟悉后再考虑。
 
-### 3) 以为改 `intent-data` 就够了
+### 坑 6：不知道 IntentGraph 和 Intent 的区别
+- `Intent` 只返回普通意图动作，失败时上层决定是否走 LLM
+- `IntentGraph` 在 intent 未命中时可以**直接在 chipper 侧返回 KG 回答**，不再依赖外层 fallback
+- 新版 Vector 固件（≥1.8.x / 2.0.x）默认使用 `IntentGraph` 流
 
-有些意图只是“匹配到了名字”，但后面还要走参数处理、天气处理、知识问答、回包逻辑。
+---
 
-也就是说：
+## 7. 推荐的第一批二开任务
 
-- `intent-data/*.json` 负责“听懂什么词”
-- `ttr/` 负责“听懂以后怎么办”
+做完这 3 个任务，你对系统的核心链路就建立起来了：
 
-### 4) 直接跑 `update.sh`
+1. **在 `apiConfig.json` 加一个新字段，并通过网页保存它**
+   - 目标：理解 `config-ws` → `vars` → `WriteConfigToDisk()` 整条写盘链路
+2. **在 `customIntents.json` 加一条"说出这句话就执行 `echo hello`"的规则**
+   - 目标：理解 `customIntentHandler` 的执行流程和 `exec.Command` 的参数展开
+3. **在 `sdkapp` 里加一个新按钮，点击后让机器人说一句话**
+   - 目标：理解 `/api-sdk/*` → `vector-go-sdk` → 机器人的调用链
 
-这个脚本里有 `git reset --hard origin/main`，会强制覆盖本地改动。
+---
 
-二开期间不要随便跑它。
+## 8. 定位问题时的思考框架
 
-### 5) 一开始就改 `vector-cloud`
+看到一个 bug 或不符合预期的行为，依次问自己：
 
-这一块涉及机器人侧协议、IPC、token、流式语音，门槛明显更高。
+| 问题 | 排查方向 |
+| --- | --- |
+| 是网页没显示正确，还是机器人声音不对？ | 先区分是配置问题还是语音链路问题 |
+| 是匹配不到 intent，还是匹配到了但响应错了？ | 检查日志，看是否走到 `ttr.ProcessTextAll` |
+| 是主机的问题还是机器人端的问题？ | 检查 chipper 日志 vs vector-cloud 日志 |
+| 改配置能解决还是需要改代码？ | 优先尝试配置文件，不行再看源码 |
 
-## 7. 推荐你的第一批二开任务
+---
 
-如果你刚上手，我建议先做这 3 类小任务：
+## 9. 正式开始改代码前的 checklist
 
-1. 新增一个配置项并保存到 `apiConfig.json`
-2. 新增一个自定义意图，让机器人说某句话时执行命令
-3. 给 SDK 页面加一个按钮，调用已有机器人接口
-
-这三类任务能让你快速熟悉：
-
-- 前端静态页
-- Go 后端接口
-- 配置落盘
-- 机器人控制调用
-
-## 8. 以后你定位问题时的思考模板
-
-看到一个需求，先问自己 4 个问题：
-
-1. 这是网页配置问题，还是语音请求问题？
-2. 这是“匹配不到”，还是“匹配到了但响应不对”？
-3. 这是主机侧 `chipper` 的事，还是机器人侧 `vector-cloud` 的事？
-4. 这是改配置就能解决，还是必须改底层代码？
-
-## 9. 如果你准备正式开始改代码
-
-建议采用这个顺序：
-
-```mermaid
-flowchart TD
-    A[先确认需求属于哪一层] --> B[找到入口文件]
-    B --> C[看请求最终落到哪个 handler]
-    C --> D[定位配置结构或业务函数]
-    D --> E[先做最小改动]
-    E --> F[确认是否影响网页/机器人/配置文件]
-    F --> G[再继续扩展]
+```
+□ 确认需求属于哪一层（页面 / 意图 / KG / 机器人协议）
+□ 找到对应的入口文件（见 §2 表格）
+□ 看该 handler 最终落到哪个函数
+□ 定位相关的配置结构体或数据模型
+□ 做最小改动（一次只动一处）
+□ 确认是否影响网页展示 / 机器人行为 / 配置文件落盘
+□ 再继续扩展
 ```
 
-## 10. 一句话总结
+---
 
-对这个项目做二开时，最重要的不是先学会所有 Go 语法，而是先建立下面这个稳定地图：
+## 10. 一句话记忆
 
-- 启动在 `initwirepod`
-- 请求先到 `preqs`
-- 业务主要在 `ttr`
-- 配置在 `vars` 和 `config-ws`
-- 页面在 `webroot`
-- 机器人兼容层在 `vector-cloud`
+对这个项目做二开，最重要的不是先学会所有 Go 语法，而是建立下面这张稳定地图：
 
-只要这张地图在脑子里稳定了，后面看代码会轻松很多。
+> **启动在 `initwirepod` → 请求先到 `preqs` → 业务主要在 `ttr` → 配置在 `vars` / `config-ws` → 页面在 `webroot` → 机器人协议在 `vector-cloud`**
 
-## 11. 关于这次“小智，小智”改造要特别注意什么
+---
 
-这次需求最容易踩坑的地方是：**页面默认文案切到“小智，小智”**，不等于**机器人固件一定已经把真实热词改成“小智，小智”**。
+## 11. 与"小智，小智"改造相关注意事项
 
-这次改造建议按下面顺序理解：
+本次改造涉及默认唤醒词从 "Hey, Vector" 切到中文场景，最容易踩的点是：**页面文案改了 ≠ 机器人真实热词已替换**。
 
-1. `chipper/webroot/setup.html` 和 `chipper/webroot/sdkapp/` 负责页面与默认入口体验
-2. `pkg/wirepod/config-ws/webserver.go` 负责 STT 语言写入与落盘
-3. `pkg/wirepod/sdkapp/` 负责机器人 `locale`、`button_wakeword` 和 `vic.RobotSettings` 缓存链路
-4. `vector-cloud/internal/voice/process.go` 负责接到 hotword 事件后决定后续 `LanguageCode`
+改造落点优先级：
+1. `chipper/webroot/setup.html` 和 `chipper/webroot/sdkapp/settings.html` — 页面默认体验
+2. `chipper/pkg/wirepod/config-ws/webserver.go` — STT 语言写入（`zh-CN`）
+3. `chipper/pkg/wirepod/sdkapp/` — locale / button_wakeword / `vic.RobotSettings` 缓存
+4. `vector-cloud/internal/voice/process.go` — hotword 事件后的 `LanguageCode` 映射
 
-这意味着：
-
-- 大多数“默认体验切到中文”的工作应该优先落在 `chipper/`
-- 如果你看到机器人真实说“小智，小智”仍然不能唤醒，不要第一时间怀疑前端页面
-- 还要检查：
-  - `zh-CN` 的 STT 是否已启用
-  - `locale` 是否真的同步到了机器人设置
-  - `vector-cloud` 是否仍然回退到了英文语言码
-  - 机器人固件 / 上游热词检测是否支持这个新短语
-
-一句话说：这次默认入口迁移主要是 `chipper` 工作，真实语音热词能不能一起改掉，仍然要看更底层的能力边界。
+注意：当前 `getLanguage()` 函数（`process.go:456`）的 switch 只有 en/fr/de 三个分支，`zh-CN` 会回退到英文。因此中文语音热词的真实识别能力取决于底层 STT 模型和固件热词配置，不在 `chipper` 代码本身内。
